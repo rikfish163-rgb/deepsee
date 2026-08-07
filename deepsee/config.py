@@ -171,9 +171,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "upstream": {
         "base_url": "https://api.deepseek.com/v1",
+        "anthropic_base_url": "",
         "api_key": "",
         "model": "deepseek-v4-flash",
-        "format": "openai",  # openai | anthropic
+        "format": "auto",  # openai | anthropic | auto(OpenAI进→OpenAI上游,Anthropic进→Anthropic上游)
     },
     "proxy": {
         "port": 8080,

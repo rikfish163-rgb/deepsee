@@ -142,6 +142,13 @@ class HttpError(Exception):
         super().__init__(f"HTTP {status}: {body[:300]}")
 
 
+# 部分中继/API 走 Cloudflare,默认 urllib UA 会被 1010 拦,统一用浏览器 UA
+DEFAULT_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+)
+
+
 def http_json(
     url: str,
     payload: dict | None = None,
@@ -151,7 +158,8 @@ def http_json(
 ):
     """POST/GET JSON,返回 (status, json)。失败抛 HttpError。"""
     data = None
-    hdrs = {"Accept": "application/json", "Content-Type": "application/json"}
+    hdrs = {"Accept": "application/json", "Content-Type": "application/json",
+            "User-Agent": DEFAULT_UA}
     if headers:
         hdrs.update(headers)
     if payload is not None:
@@ -182,7 +190,8 @@ def http_stream(
     timeout: int = 120,
 ):
     """流式请求,返回逐行迭代器(SSE 行)。失败抛 HttpError。"""
-    hdrs = {"Accept": "text/event-stream", "Content-Type": "application/json"}
+    hdrs = {"Accept": "text/event-stream", "Content-Type": "application/json",
+            "User-Agent": DEFAULT_UA}
     if headers:
         hdrs.update(headers)
     req = urllib.request.Request(

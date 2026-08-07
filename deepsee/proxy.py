@@ -24,6 +24,18 @@ class ProxyError(Exception):
         super().__init__(msg)
 
 
+def _anthropic_base(up: dict) -> str:
+    """Anthropic 上游的基础地址:优先 anthropic_base_url;
+    DeepSeek 官方默认(v1→anthropic 惯例)兜底;否则用 base_url。"""
+    ab = up.get("anthropic_base_url")
+    if ab:
+        return ab
+    base = up.get("base_url", "https://api.deepseek.com/v1")
+    if "api.deepseek.com" in base and base.endswith("/v1"):
+        return "https://api.deepseek.com/anthropic"
+    return base
+
+
 # ---------------------------------------------------------------------------
 # 请求处理
 # ---------------------------------------------------------------------------
@@ -131,7 +143,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             content = m.get("content")
             if isinstance(content, list):
                 m["content"], _n = converter.anthropic_content(content)
-        url = safe_join(up.get("base_url", "https://api.deepseek.com/anthropic"), "v1/messages")
+        url = safe_join(_anthropic_base(up), "v1/messages")
         headers = {"Authorization": f"Bearer {up.get('api_key', '')}",
                    "anthropic-version": self.headers.get("anthropic-version", "2023-06-01"),
                    "x-api-key": up.get("api_key", "")}
@@ -209,7 +221,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
         if system:
             ap["system"] = system
         up = self.cfg.get("upstream", {})
-        url = safe_join(up.get("base_url", "https://api.deepseek.com/anthropic"), "v1/messages")
+        url = safe_join(_anthropic_base(up), "v1/messages")
         headers = {"Authorization": f"Bearer {up.get('api_key', '')}",
                    "x-api-key": up.get("api_key", ""),
                    "anthropic-version": "2023-06-01"}

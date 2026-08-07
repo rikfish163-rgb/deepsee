@@ -101,10 +101,12 @@ def _upstream(cfg: dict) -> tuple[str, str, dict]:
 
 
 def extract_openai_text(data: dict) -> str:
+    """提取回复文本;思考型模型 content 为空时回退到 reasoning_content。"""
     try:
-        return data["choices"][0]["message"]["content"] or ""
+        msg = data["choices"][0]["message"] or {}
     except (KeyError, IndexError, TypeError):
         return ""
+    return msg.get("content") or msg.get("reasoning_content") or ""
 
 
 def chat_openai(cfg: dict, payload: dict, timeout: int = 120) -> str:
@@ -122,7 +124,11 @@ def chat_openai(cfg: dict, payload: dict, timeout: int = 120) -> str:
 
 
 def iter_chat(cfg: dict, payload: dict, timeout: int = 120) -> Iterator[str]:
-    """流式对话,产出内容增量文本。图片已自动转文字。"""
+    """流式对话,产出内容增量文本。图片已自动转文字。
+
+    兼容思考型模型:优先取 content,没有则取 reasoning_content,
+    保证思考阶段也能看到进度、最终答案不丢。
+    """
     payload = build_openai_payload(cfg, payload)
     payload["stream"] = True
     base, _key, headers = _upstream(cfg)
@@ -145,6 +151,7 @@ def iter_chat(cfg: dict, payload: dict, timeout: int = 120) -> Iterator[str]:
         choices = obj.get("choices") or []
         if not choices:
             continue
-        delta = (choices[0].get("delta") or {}).get("content")
-        if delta:
-            yield delta
+        delta = choices[0].get("delta") or {}
+        token = delta.get("content") or delta.get("reasoning_content")
+        if token:
+            yield token
