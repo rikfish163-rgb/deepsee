@@ -27,7 +27,7 @@ deepsee 对这两者**都不绑定具体厂商**,自己接什么都行。
 
 ```bash
 # PyPI 发布后(未发布前用源码)
-pip install deepsee
+pip install deepsee-mcp
 
 # 或从源码
 git clone https://github.com/<你>/deepsee.git

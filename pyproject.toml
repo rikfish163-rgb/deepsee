@@ -3,7 +3,8 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "deepsee"
+# PyPI 上 deepsee 已被占用,分发名用 deepsee-mcp(命令与导入包仍叫 deepsee)
+name = "deepsee-mcp"
 version = "0.1.0"
 description = "给 DeepSeek 等纯文本模型补齐图片理解与文生图能力的全家桶：Claude Code Hook + MCP + 双协议代理 + Web 面板"
 readme = "README.md"

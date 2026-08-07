@@ -15,7 +15,7 @@
 ## 快速开始
 
 ```bash
-pip install deepsee        # 或: git clone <repo> && ./install.sh
+pip install deepsee-mcp        # 或: git clone <repo> && ./install.sh
 deepsee setup              # 向导:①选视觉供应商(智谱免费) ②填上游 ③集成
 deepsee install            # 装进 Claude Code(Hook + MCP),重启即生效
 # 然后:Claude Code 里直接贴图,DeepSeek 就能看懂
@@ -55,7 +55,7 @@ deepsee install            # 装进 Claude Code(Hook + MCP),重启即生效
 }
 ```
 
-- 全局安装后即可用:`pipx install deepsee`(或 `pip install deepsee`),然后 `deepsee mcp`。
+- 全局安装后即可用:`pipx install deepsee-mcp`(或 `pip install deepsee-mcp`),然后 `deepsee mcp`。
 - 工具:`describe_image` / `ocr_image` / `generate_image` / `vision_status`。
 - 配置目录通过环境变量 `DEEPSEE_HOME` 覆盖(默认 `~/.deepsee`)。
 - 发布到 Smithery/mcp.so:见 `docs/CONFIGURATION.md` 的「MCP 发布」一节。
