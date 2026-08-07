@@ -1,72 +1,65 @@
 # deepsee
 
-> 给 DeepSeek 等**纯文本模型**补齐「看」与「画」能力的全家桶。
+> 给 DeepSeek 等**纯文本模型**补上「看图」能力 —— 在 Claude Code / Codex / Cursor / 任意聊天客户端里贴一张图,模型能读懂并回答,不报 unsupported,和原生识图模型一样丝滑。
 
-DeepSeek V4 / V3 是纯文本模型——不能看图,也不能画图。`deepsee` 用廉价的
-OpenAI 兼容视觉 API(默认免费的 GLM-4V-Flash)把图片转成文字喂给 DeepSeek,
-再用任意文生图 API 让 DeepSeek 能"画出"结果。全程支持**自己接任意 API**。
+[![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![零依赖](https://img.shields.io/badge/deps-stdlib%20only-4fd8e0)](pyproject.toml)
 
-## 一句话
+**原理**:DeepSeek 纯文本看不到图,deepsee 用便宜/免费的视觉 API(默认智谱 GLM-4V-Flash)把图转成文字描述,再喂给你的 DeepSeek。视觉供应商和上游 LLM 都**任意自接**,不绑定任何厂商。
 
-```bash
-pip install . && deepsee setup        # 向导:填一次视觉 API key,自动配好各终端
-deepsee ui                            # 一键:起代理 + 打开网页聊天界面
-deepsee see ./截图.png                # 命令行看图
-deepsee gen "一只在月球上打篮球的柴犬"   # 命令行画图
-deepsee web                           # 打开 Web 面板(对话/识图/画图/状态/配置)
-deepsee client-cfg                    # 打印接入 Cherry Studio 等客户端的配置
+```
+你贴图 ──→ 视觉 API(免费/便宜)转成文字 ──→ 你的 DeepSeek 读描述回答
 ```
 
-## 它解决了什么
-
-| 痛点 | 现状 |
-|---|---|
-| 在 Claude Code 里贴图,DeepSeek 报 unsupported | `PreToolUse` Hook 自动把图换成文字描述,模型以为自己看了图,丝滑无报错 |
-| 想在网页里直接贴图跟 DeepSeek 聊 | Web 面板「对话」标签页:粘贴/上传图片 → 自动转文字 → 流式回复 |
-| Codex / Cursor / OpenCode 里发图直接报错崩溃 | 本地代理 `base_url` 一改,image 块自动转文字 |
-| 想给 DeepSeek 加图片能力但不会写 MCP | 内置轻量 MCP server(`describe_image` / `generate_image`),一键注册 |
-| 想在 Cherry Studio / ChatBox 里用 DeepSeek 看图 | 面板「状态」页一键复制接入配置,或 `deepsee client-cfg` |
-
-## 没有 API key?也能用
-
-`deepsee setup` 时选「演示模式」或「本地 OCR」即可零 key 先跑:
-
-- **演示模式(demo)**:不调用任何 API,返回固定文案,体验完整流程(CLI/网页对话/识图)
-- **本地 OCR(local-ocr)**:离线提取图片文字,`pip install 'deepsee[ocr]'` 后即可,永不花钱
-- 之后随时补 key:面板「配置」页或 `deepsee setup` 重跑
-
-## 安全回退
-
-向导在写任何文件前会先给你**摘要确认**(答 `n` = 不修改任何文件)。想撤销安装:
+## 快速开始
 
 ```bash
-deepsee uninstall   # 从 .deepsee.bak 备份恢复 settings.json/opencode.json,
-                    # 移除 Codex skill 与 MCP 注册
+pip install deepsee        # 或: git clone <repo> && ./install.sh
+deepsee setup              # 向导:①选视觉供应商(智谱免费) ②填上游 ③集成
+deepsee install            # 装进 Claude Code(Hook + MCP),重启即生效
+# 然后:Claude Code 里直接贴图,DeepSeek 就能看懂
 ```
 
-## 兼容矩阵
+完整的**配置方法**(拿 key、各字段含义、常见组合、排障)见 [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md)。
 
-| 载体 | 集成方式 | 状态 |
+## 没有 API key?
+
+`deepsee setup` 选「演示模式」或「本地 OCR」即可零成本先跑起来,之后随时补 key。
+
+## 六种使用形态
+
+| 形态 | 命令/方式 | 适用 |
 |---|---|---|
-| Claude Code | Hook + MCP + 代理(Anthropic 协议) | ✅ 自动配置 |
-| Codex Desktop / CLI | Skill + 代理(OpenAI 协议) | ✅ 自动配置 |
-| OpenCode | provider 补丁 | ✅ 自动配置 |
-| Cursor | base_url 指引 | ✅ 自动配置 |
-| 任意 OpenAI / Anthropic 客户端 | 双协议代理 | ✅ |
+| **Claude Code Hook** | `deepsee install` | 贴图自动识图,最丝滑 |
+| **MCP 工具** | `deepsee install` → `describe_image`/`generate_image` | 模型主动调用 |
+| **网页聊天界面** | `deepsee ui` / `deepsee web` | 浏览器里贴图即聊(流式) |
+| **双协议代理** | `deepsee start` | Cherry Studio / ChatBox / Cursor / OpenCode / Cline |
+| **Codex skill** | `deepsee install --skill` | Codex Desktop / CLI |
+| **CLI** | `deepsee see/ocr/gen` | 终端直接看图/画图 |
 
-## 视觉供应商(可自接任意 OpenAI 兼容)
+## 兼容性
 
-内置预设:智谱 GLM-4V-Flash(**免费**)、阿里百炼 qwen-vl、硅基流动 Qwen2.5-VL、
-OpenAI、Gemini、Groq、OpenRouter、StepFun、Moonshot、腾讯混元、零一万物、本地 vLLM/Ollama。
+- **视觉供应商**:任意 OpenAI 兼容视觉端点 —— 智谱 GLM-4V-Flash(免费)、阿里百炼 qwen-vl、硅基流动、OpenAI、Gemini、Groq、OpenRouter、本地 vLLM/Ollama;多供应商**自动降级链**。
+- **上游**:任意 OpenAI / Anthropic 兼容端点 —— DeepSeek 官方、各类中转/网关、本地 Ollama;`format=auto` 时双协议各自流式转发。
+- **免 key**:`demo` 演示模式(零网络)、`local-ocr` 本地 OCR(离线)。
+- 纯 stdlib,零第三方依赖;Linux / macOS / Windows。
 
-多供应商**降级链**:第一个挂了自动切下一个。
+## 项目结构
 
-## 目录
-
-- `deepsee/` 核心包(零第三方依赖,纯 stdlib)
-- `deepsee/web/` Web 面板
-- `tests/` pytest 测试
-- `docs/` PRD / 架构文档
+```
+deepsee/
+├── vision.py    视觉客户端 + 多供应商降级链
+├── caption.py   识图(describe/ocr/qa)
+├── chat.py      对话服务(图片→文字→上游,代理与网页共用)
+├── proxy.py     OpenAI + Anthropic 双协议代理(图片块→文字→DeepSeek)
+├── mcp_server.py 手写轻量 MCP(零依赖)
+├── hook_claude.py Claude Code PreToolUse Hook
+├── web.py + web/static/  网页聊天界面(标签页:对话/识图/画图/状态/配置)
+├── cli.py / installer.py / config.py / util.py / generate.py
+docs/  PRD / 架构 / 配置方法
+tests/ pytest(75 用例,全离线 mock)
+```
 
 ## 开发
 
@@ -74,3 +67,7 @@ OpenAI、Gemini、Groq、OpenRouter、StepFun、Moonshot、腾讯混元、零一
 pip install -e '.[dev]'
 pytest
 ```
+
+## License
+
+MIT License —— 随便用、随便改,欢迎提交 PR 与 issue。

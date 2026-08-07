@@ -15,8 +15,14 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Operating System :: OS Independent",
 ]
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/rikfish163-rgb/deepsee"
+Repository = "https://github.com/rikfish163-rgb/deepsee"
+Documentation = "https://github.com/rikfish163-rgb/deepsee/blob/main/docs/CONFIGURATION.md"
 
 [project.optional-dependencies]
 # MCP 服务器官方 SDK（可选，不装则用手写轻量 stdio 服务器）
