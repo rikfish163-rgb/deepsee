@@ -25,14 +25,21 @@ class ProxyError(Exception):
 
 
 def _anthropic_base(up: dict) -> str:
-    """Anthropic 上游的基础地址:优先 anthropic_base_url;
-    DeepSeek 官方默认(v1→anthropic 惯例)兜底;否则用 base_url。"""
+    """Anthropic 上游的基础地址:优先 anthropic_base_url。
+
+    兜底推导:
+    - DeepSeek 官方: OpenAI base 是 .../v1,Anthropic base 是 .../anthropic(特例)
+    - 通用 OpenAI 兼容中继: OpenAPI base 是 {root}/v1,Anthropic 在 {root} → 去 /v1
+    - 其余原样
+    """
     ab = up.get("anthropic_base_url")
     if ab:
-        return ab
-    base = up.get("base_url", "https://api.deepseek.com/v1")
-    if "api.deepseek.com" in base and base.endswith("/v1"):
+        return ab.rstrip("/")
+    base = up.get("base_url", "https://api.deepseek.com/v1").rstrip("/")
+    if "api.deepseek.com" in base:
         return "https://api.deepseek.com/anthropic"
+    if base.endswith("/v1"):
+        return base[:-3]
     return base
 
 

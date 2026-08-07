@@ -41,38 +41,57 @@ def test_uninstall_claude_hook_noop_when_missing(tmp_path, monkeypatch):
 
 
 def test_install_claude_hook_adds_entry(tmp_path, monkeypatch):
-    home = tmp_path
-    claude_dir = home / ".claude"
+    claude_dir = tmp_path / ".claude"
     claude_dir.mkdir(parents=True)
-    settings = claude_dir / "settings.json"
-    settings.write_text(json.dumps({"hooks": {}}))
-
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude_dir))
     monkeypatch.setattr(installer.shutil, "which", lambda _: "/fake/bin/deepsee")
 
     ok = installer.install_claude_hook()
     assert ok
-    data = json.loads(settings.read_text())
-    entries = data["hooks"]["PreToolUse"]
+    local = json.loads((claude_dir / "settings.local.json").read_text())
+    entries = local["hooks"]["PreToolUse"]
     assert any("deepsee" in e["hooks"][0]["command"] for e in entries)
+    # hook 放 settings.local.json,settings.json 不被写(cc-switch 会重写 settings.json)
+    st = json.loads((claude_dir / "settings.json").read_text()) if (claude_dir / "settings.json").exists() else {}
+    assert not st.get("hooks")
+    # 配置 hook 标志被置 true
+    from deepsee.config import load
+
+    assert load()["agents"]["claude_code"]["hook"] is True
     # 幂等:再装一次不重复
     installer.install_claude_hook()
-    data2 = json.loads(settings.read_text())
-    assert len(data2["hooks"]["PreToolUse"]) == 1
+    local2 = json.loads((claude_dir / "settings.local.json").read_text())
+    assert len(local2["hooks"]["PreToolUse"]) == 1
 
 
 def test_install_claude_hook_idempotent_removal(tmp_path, monkeypatch):
-    home = tmp_path
-    claude_dir = home / ".claude"
+    claude_dir = tmp_path / ".claude"
     claude_dir.mkdir(parents=True)
-    settings = claude_dir / "settings.json"
-    settings.write_text(json.dumps({"hooks": {"PreToolUse": [
+    local = claude_dir / "settings.local.json"
+    local.write_text(json.dumps({"hooks": {"PreToolUse": [
         {"matcher": "Read", "hooks": [{"type": "command", "command": "/x/deepsee hook"}]}
     ]}}))
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude_dir))
     assert installer.uninstall_claude_hook() is True
-    data = json.loads(settings.read_text())
+    data = json.loads(local.read_text())
     assert data["hooks"]["PreToolUse"] == []
+
+
+def test_hook_migration_from_settings_json(tmp_path, monkeypatch):
+    """settings.json 里的旧 deepsee hook 应被迁移移除。"""
+    claude_dir = tmp_path / ".claude"
+    claude_dir.mkdir(parents=True)
+    settings = claude_dir / "settings.json"
+    settings.write_text(json.dumps({"hooks": {"PreToolUse": [
+        {"matcher": "Read", "hooks": [{"type": "command", "command": "/x/deepsee hook"}]},
+        {"matcher": "Edit", "hooks": [{"type": "command", "command": "/x/other hook"}]},
+    ]}}))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude_dir))
+    monkeypatch.setattr(installer.shutil, "which", lambda _: "/fake/bin/deepsee")
+    installer.install_claude_hook()
+    st = json.loads(settings.read_text())
+    assert not any("deepsee" in e["hooks"][0]["command"] for e in st["hooks"]["PreToolUse"])
+    assert any("other" in e["hooks"][0]["command"] for e in st["hooks"]["PreToolUse"])
 
 
 def test_restore_backups(tmp_path, monkeypatch):
@@ -117,6 +136,6 @@ def test_setup_wizard_noninteractive_demo(tmp_path, monkeypatch):
 
     cfg = load()
     assert cfg["vision"]["chain"][0]["provider"] == "demo"
-    # 只写了配置 + 项目 .mcp.json,未动真实 home 的任何文件
+    # 只写了配置,未动真实 home 的任何文件、不写项目级 .mcp.json
     assert (tmp_path / ".deepsee" / "config.json").exists()
-    assert (tmp_path / ".mcp.json").exists()
+    assert not (tmp_path / ".mcp.json").exists()

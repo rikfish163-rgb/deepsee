@@ -59,8 +59,30 @@ def _claude_settings_path() -> Path:
     return base / "settings.json"
 
 
+def _claude_local_settings_path() -> Path:
+    home = Path.home()
+    base = Path(os.environ.get("CLAUDE_CONFIG_DIR", home / ".claude"))
+    return base / "settings.local.json"
+
+
+def _cc_switch_active() -> bool:
+    """检测本机是否在用 cc-switch 管理 Claude Code 供应商(它整文件重写 settings.json)。"""
+    if (Path.home() / ".cc-switch" / "cc-switch.db").exists():
+        try:
+            env = read_json_file(_claude_settings_path(), {}).get("env", {})
+            base = env.get("ANTHROPIC_BASE_URL", "")
+            if "127.0.0.1" in base or "localhost" in base:
+                return True
+        except Exception:  # noqa: BLE001
+            pass
+    return False
+
+
 def install_claude_hook() -> bool:
-    path = _claude_settings_path()
+    """把 Hook 注册到 settings.local.json —— cc-switch 只重写 settings.json,
+    放 local 才能存活。同时把旧的(在 settings.json 里的)deepsee hook 迁移走。"""
+    _migrate_hook_from_settings_json()
+    path = _claude_local_settings_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     existing = read_json_file(path, {})
     _backup(path)
@@ -68,41 +90,79 @@ def install_claude_hook() -> bool:
     cmd = f"{_deepsee_command()} hook"
     hooks = existing.setdefault("hooks", {})
     entries = hooks.setdefault("PreToolUse", [])
-    # 去重:已有 deepsee hook 则跳过
     for e in entries:
         for h in e.get("hooks", []):
             if "deepsee" in h.get("command", "") and h.get("command", "").endswith("hook"):
+                _set_hook_enabled(True)
                 cprint("  · Claude Code Hook 已存在,跳过", "cyan")
+                if _cc_switch_active():
+                    cprint("  ⚠ 检测到 cc-switch:它会整文件重写 settings.json,但 hook 已放在 settings.local.json,不受影响", "cyan")
                 return True
     entries.append({
         "matcher": "Read",
         "hooks": [{"type": "command", "command": cmd, "timeout": 60}],
     })
     path.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
-    cprint(f"  ✓ 已注册 Claude Code Hook → {path}", "green")
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+    # 开启配置里的 hook 标志(hook 运行时检查,false 则透传)
+    _set_hook_enabled(True)
+    cprint(f"  ✓ 已注册 Claude Code Hook → {path}(settings.local.json,cc-switch 重写 settings.json 也不会丢)", "green")
     return True
 
 
-def uninstall_claude_hook() -> bool:
+def _set_hook_enabled(enabled: bool) -> None:
+    cfg = load()
+    if cfg["agents"]["claude_code"].get("hook") != enabled:
+        cfg["agents"]["claude_code"]["hook"] = enabled
+        save(cfg)
+
+
+def _migrate_hook_from_settings_json() -> bool:
+    """把 settings.json 里旧的 deepsee hook 移除(hook 已改放 settings.local.json)。"""
     path = _claude_settings_path()
     data = read_json_file(path, {})
-    if not data:
-        return False
-    _backup(path)
     entries = data.get("hooks", {}).get("PreToolUse", [])
     kept = []
     removed = False
     for e in entries:
         cmds = [h.get("command", "") for h in e.get("hooks", [])]
-        if any("deepsee" in c for c in cmds):
+        if any("deepsee" in c and c.endswith("hook") for c in cmds):
             removed = True
             continue
         kept.append(e)
-    data.setdefault("hooks", {})["PreToolUse"] = kept
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     if removed:
-        cprint("  ✓ 已移除 Claude Code Hook", "green")
+        _backup(path)
+        data.setdefault("hooks", {})["PreToolUse"] = kept
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        cprint("  · 已从 settings.json 迁移旧 deepsee Hook → settings.local.json", "cyan")
     return removed
+
+
+def uninstall_claude_hook() -> bool:
+    removed_any = False
+    for path in (_claude_local_settings_path(), _claude_settings_path()):
+        data = read_json_file(path, {})
+        entries = data.get("hooks", {}).get("PreToolUse", [])
+        kept = []
+        removed = False
+        for e in entries:
+            cmds = [h.get("command", "") for h in e.get("hooks", [])]
+            if any("deepsee" in c for c in cmds):
+                removed = True
+                continue
+            kept.append(e)
+        if removed:
+            _backup(path)
+            data.setdefault("hooks", {})["PreToolUse"] = kept
+            path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+            removed_any = True
+    if removed_any:
+        _set_hook_enabled(False)
+        cprint("  ✓ 已移除 Claude Code Hook(settings.json + settings.local.json)", "green")
+    return removed_any
 
 
 # ---------------------------------------------------------------------------
@@ -150,8 +210,8 @@ def uninstall_codex_skill() -> bool:
 
 
 def install_mcp() -> bool:
+    """注册 MCP 到 Claude Code 用户配置(不写项目级 .mcp.json,避免作用域不确定)。"""
     cmd = f"{_deepsee_command()} mcp"
-    # 优先用官方 claude mcp 命令
     claude = shutil.which("claude")
     if claude:
         try:
@@ -162,20 +222,15 @@ def install_mcp() -> bool:
             if r.returncode == 0:
                 cprint("  ✓ 已注册 MCP(用户级)→ deepsee", "green")
                 return True
-            cprint(f"  ⚠ claude mcp add 失败({r.stderr.strip()[:120]}),改用 .mcp.json", "yellow")
+            err = (r.stderr or "") + (r.stdout or "")
+            if "already exists" in err.lower():
+                cprint("  ✓ MCP(deepsee)已在用户配置中,无需重复注册", "green")
+                return True
+            cprint(f"  ⚠ claude mcp add 失败({err.strip()[:120]})", "yellow")
+            cprint("    请手动运行: claude mcp add --scope user deepsee -- <deepsee路径> mcp", "cyan")
         except FileNotFoundError:
             pass
-    # 兜底:写入项目级 .mcp.json
-    mcp_file = Path.cwd() / ".mcp.json"
-    data = read_json_file(mcp_file, {})
-    data.setdefault("mcpServers", {})["deepsee"] = {
-        "type": "stdio",
-        "command": cmd.split()[0],
-        "args": cmd.split()[1:],
-    }
-    mcp_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    cprint(f"  ✓ 已写入 MCP 配置 → {mcp_file}", "green")
-    return True
+    return False
 
 
 # ---------------------------------------------------------------------------

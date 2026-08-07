@@ -112,3 +112,47 @@ def test_serve_stdio_roundtrip(monkeypatch, capsys):
     assert len(captured) == 2
     assert json.loads(captured[0])["id"] == 1
     assert json.loads(captured[1])["result"]["tools"][0]["name"]
+
+
+def test_hook_json_contract(tmp_path):
+    """hook 输出的 updatedInput JSON 契约(嵌套 hookSpecificOutput.updatedInput)。"""
+    import io
+
+    from deepsee import hook_claude as h
+    from deepsee.config import load, save
+
+    # 在隔离的 DEEPSEE_HOME 里写一个带视觉链的配置(hook 才不提前透传)
+    cfg = load()
+    cfg["vision"]["chain"] = [{"provider": "demo", "base_url": "", "api_key": "", "model": ""}]
+    cfg["agents"]["claude_code"]["hook"] = True
+    save(cfg)
+
+    class _FakeSeer:
+        def __init__(self, *a, **k):
+            pass
+
+        @classmethod
+        def from_config(cls, cfg):
+            return cls()
+
+        def describe(self, fp):
+            return "这是一张红色图片。", "demo"
+
+    orig_seer = h.Seer
+    h.Seer = _FakeSeer
+    buf = io.StringIO()
+    stdin = io.StringIO(json.dumps({
+        "hook_event_name": "PreToolUse", "tool_name": "Read",
+        "tool_input": {"file_path": "/tmp/x.png"}, "model": "deepseek-v4-flash",
+    }))
+    old_stdin, old_stdout = h.sys.stdin, h.sys.stdout
+    h.sys.stdin, h.sys.stdout = stdin, buf
+    try:
+        assert h.run_stdin() == 0
+    finally:
+        h.sys.stdin, h.sys.stdout = old_stdin, old_stdout
+        h.Seer = orig_seer
+    data = json.loads(buf.getvalue())
+    upd = data["hookSpecificOutput"]["hookSpecificOutput"]["updatedInput"]
+    assert upd["file_path"].endswith(".txt")
+    assert data["hookSpecificOutput"]["permissionDecision"] == "allow"

@@ -174,3 +174,18 @@ def test_models_and_health(mock_vision, mock_upstream):
         assert status == 200
     finally:
         srv.shutdown(); srv.server_close()
+
+
+def test_anthropic_base_dedup_v1():
+    """_anthropic_base 应避免 /v1/v1 双路径。"""
+    from deepsee.proxy import _anthropic_base
+
+    # 通用中继: OpenAI base 带 /v1,Anthropic 应去 /v1
+    assert _anthropic_base({"base_url": "https://relay.example.com/v1"}) == "https://relay.example.com"
+    # 显式 anthropic_base_url 优先
+    assert _anthropic_base({"base_url": "https://relay.example.com/v1",
+                            "anthropic_base_url": "https://relay.example.com/anthropic"}) == "https://relay.example.com/anthropic"
+    # DeepSeek 官方特例
+    assert _anthropic_base({"base_url": "https://api.deepseek.com/v1"}) == "https://api.deepseek.com/anthropic"
+    # 无 /v1 尾原样
+    assert _anthropic_base({"base_url": "https://x.com"}) == "https://x.com"

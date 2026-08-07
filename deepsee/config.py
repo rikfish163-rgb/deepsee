@@ -177,7 +177,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "format": "auto",  # openai | anthropic | auto(OpenAI进→OpenAI上游,Anthropic进→Anthropic上游)
     },
     "proxy": {
-        "port": 8080,
+        "port": 8081,  # 8080 常被本机其他服务占用,默认换 8081
         "master_key": "",
     },
     "generation": {
@@ -192,9 +192,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "agents": {
         "claude_code": {
             "hook": False,
-            # 需要桥接的目标模型子串列表;空列表 = 对所有模型都桥接
-            # (装 Hook 的本意就是给 DeepSeek 用;非 DeepSeek 模型可在此排除)
-            "target_models": ["deepseek"],
+            # 需要桥接的目标模型子串列表;空列表 = 对全部模型桥接(默认)。
+            # 装 Hook 的本意就是给纯文本模型用(DeepSeek 等)。若你实际用的
+            # 模型原生支持看图且不想走转换,设一个永不匹配的值即可禁用,
+            # 例如 target_models=["__none__"];详见 docs/CONFIGURATION.md。
+            "target_models": [],
         },
         "codex": {"skill": False},
         "opencode": {"patched": False},
@@ -287,11 +289,3 @@ def validate(cfg: dict) -> list[str]:
 
 def vision_chain(cfg: dict) -> list[dict]:
     return cfg.get("vision", {}).get("chain", []) or []
-
-
-def is_target_model(model: str) -> bool:
-    """判断模型名是否是需要桥接的纯文本目标(默认 DeepSeek 系)。"""
-    m = (model or "").lower()
-    if "deepseek" in m:
-        return True
-    return False

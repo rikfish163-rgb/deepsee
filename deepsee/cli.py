@@ -444,6 +444,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(fn=_cmd_config)
 
     s = sub.add_parser("hook", help="(内部)Claude Code Hook 入口")
+    s.add_argument("--verify", action="store_true", help="自检 hook JSON 契约与配置状态")
     s.set_defaults(fn=_cmd_hook)
 
     s = sub.add_parser("mcp", help="(内部)MCP Server 入口")
