@@ -278,6 +278,29 @@ def _cmd_mcp(args) -> int:
     return mcp_main()
 
 
+def _cmd_install(args) -> int:
+    """把集成装到本机(用现有配置,非交互):Claude Code Hook + MCP,可加 Codex/OpenCode。"""
+    from .installer import (
+        install_claude_hook,
+        install_codex_skill,
+        install_mcp,
+        patch_opencode,
+    )
+
+    cfg = load()
+    cprint("安装 deepsee 集成…", "cyan")
+    if args.hook or args.all:
+        install_claude_hook()
+    if args.mcp or args.all:
+        install_mcp()
+    if args.skill:
+        install_codex_skill()
+    if args.opencode:
+        patch_opencode(cfg, cfg["proxy"]["port"])
+    cprint("\n完成。**重启 Claude Code** 后生效;回退用 `deepsee uninstall`", "green", bold=True)
+    return 0
+
+
 def _cmd_uninstall(args) -> int:
     from .installer import (
         restore_backups,
@@ -399,6 +422,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("ui", help="一键启动代理 + 面板并打开浏览器")
     s.set_defaults(fn=_cmd_ui)
+
+    s = sub.add_parser("install", help="安装集成到本机(Claude Code Hook + MCP)")
+    s.add_argument("--all", action="store_true", default=True, help="安装 Hook + MCP(默认)")
+    s.add_argument("--hook", action="store_true")
+    s.add_argument("--mcp", action="store_true")
+    s.add_argument("--skill", action="store_true", help="顺带装 Codex skill")
+    s.add_argument("--opencode", action="store_true", help="顺带打 OpenCode 补丁")
+    s.set_defaults(fn=_cmd_install)
 
     s = sub.add_parser("client-cfg", help="打印接入其他聊天客户端的配置")
     s.set_defaults(fn=_cmd_client_cfg)
