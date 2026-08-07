@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+.pytest_cache/
+
+# deepsee 运行时
+.deepsee/
+services.pid
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+
+# 生成物
+*.log

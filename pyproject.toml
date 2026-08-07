@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "deepsee"
+version = "0.1.0"
+description = "给 DeepSeek 等纯文本模型补齐图片理解与文生图能力的全家桶：Claude Code Hook + MCP + 双协议代理 + Web 面板"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "hetaisheng" }]
+keywords = ["deepseek", "vision", "mcp", "claude-code", "codex", "image", "llm"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = []
+
+[project.optional-dependencies]
+# MCP 服务器官方 SDK（可选，不装则用手写轻量 stdio 服务器）
+mcp = ["mcp>=1.0"]
+# 图片缩放加速（可选，省 token/费用）
+image = ["Pillow>=9.0"]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+deepsee = "deepsee.cli:main"
+dsv = "deepsee.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["deepsee*"]
+
+[tool.setuptools.package-data]
+"deepsee.web" = ["static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
