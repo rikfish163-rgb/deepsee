@@ -20,6 +20,7 @@ PROVIDERS: dict[str, dict[str, str]] = {
         "label": "智谱 GLM-4V-Flash(免费)",
         "base_url": "https://open.bigmodel.cn/api/paas/v4",
         "model": "glm-4v-flash",
+        "max_tokens": 1024,  # glm-4v-flash 上限 1024
         "fee": "免费",
         "note": "推荐默认;大陆直连",
     },

@@ -351,7 +351,8 @@ def setup_wizard(cfg: dict | None = None) -> int:
         key = _read_secret(f"  {name} 的 api_key", env_key)
     plan.setdefault("vision", {})["chain"] = [{
         "provider": name, "base_url": base_url, "model": model,
-        "api_key": key, "timeout": 60, "max_tokens": 2048,
+        "api_key": key, "timeout": 60,
+        "max_tokens": entry.get("max_tokens", 2048),
     }]
     plan["vision"]["mode"] = _ask("  识图模式(describe/ocr/qa)", "describe")
 
