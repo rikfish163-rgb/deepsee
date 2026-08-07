@@ -44,6 +44,22 @@ def bytes_to_data_uri(data: bytes, max_px: int = 0) -> str:
     return "data:" + _sniff_mime(data) + ";base64," + base64.b64encode(data).decode()
 
 
+def _resize_data_uri(ref: str, max_px: int) -> str:
+    """大图(data URI)压缩到 max_px 再重编码 JPEG;无 Pillow/小图则透传。"""
+    if max_px <= 0 or not ref.startswith("data:image/"):
+        return ref
+    try:
+        raw = base64.b64decode(ref.split(",", 1)[1])
+        if len(raw) < 512 * 1024:  # <512KB 直接透传,省解码 CPU
+            return ref
+        resized = _resize(raw, max_px)
+        if resized is None:
+            return ref
+        return "data:image/jpeg;base64," + base64.b64encode(resized).decode()
+    except Exception:  # noqa: BLE001
+        return ref
+
+
 def image_ref_from_source(source: str, max_px: int = 0) -> str:
     """把 路径 / URL / 剪贴板(留空) 归一化为 data URI 或 URL。"""
     if not source:
@@ -54,7 +70,7 @@ def image_ref_from_source(source: str, max_px: int = 0) -> str:
     if source.startswith(("http://", "https://")):
         return source  # 直接传 URL 给视觉 API
     if source.startswith("data:"):
-        return source
+        return _resize_data_uri(source, max_px)
     if not is_image_path(source):
         raise VisionError(f"不是支持的图片格式: {source}")
     return read_image_b64(source, max_px=max_px)

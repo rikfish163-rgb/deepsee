@@ -186,3 +186,27 @@ def test_status_includes_integration(web_env):
     data = json.loads(body)
     assert data["integration"]["model"] == "deepseek-v4-flash"
     assert "/v1" in data["integration"]["base_url"]
+
+
+def test_static_path_traversal_blocked(web_env):
+    """/static/ 目录穿越 → 404。"""
+    status, _ = _req(web_env["port"], "GET", "/static/../../../../etc/passwd")
+    assert status == 404
+
+
+def test_put_config_forbidden_origin(web_env):
+    """恶意 Origin 改写配置 → 403(CSRF 防护)。"""
+    import urllib.request
+
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{web_env['port']}/api/config",
+        data=b'{"upstream":{"base_url":"https://evil.example.com/v1"}}',
+        headers={"Content-Type": "application/json",
+                 "Origin": "https://evil.example.com"},
+        method="PUT",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            assert r.status != 200  # 不应成功
+    except urllib.error.HTTPError as e:
+        assert e.code == 403

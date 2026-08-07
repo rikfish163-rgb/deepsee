@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 from .util import HttpError, TINY_PNG_DATA_URI, cprint, http_json, safe_join
@@ -182,30 +183,35 @@ def _ref_to_bytes(image_ref: str) -> bytes:
 
 
 _OCR_ENGINE = None
+_OCR_LOCK = threading.Lock()
 
 
 def _local_ocr(image_ref: str, provider: str) -> str:
     """离线 OCR:把图片文字提取为文本(无需任何 API key)。"""
     global _OCR_ENGINE
     if _OCR_ENGINE is None:
-        try:
-            from rapidocr_onnxruntime import RapidOCR
-        except ImportError as e:
-            raise VisionError(
-                "本地 OCR 未安装:运行 `pip install 'deepsee[ocr]'` 或 `pip install rapidocr-onnxruntime`"
-            ) from e
-        try:
-            _OCR_ENGINE = RapidOCR()
-        except Exception as e:  # noqa: BLE001
-            raise VisionError(f"本地 OCR 初始化失败: {e}") from e
+        with _OCR_LOCK:  # 多线程下只初始化一次
+            if _OCR_ENGINE is None:
+                try:
+                    from rapidocr_onnxruntime import RapidOCR
+                except ImportError as e:
+                    raise VisionError(
+                        "本地 OCR 未安装:运行 `pip install 'deepsee[ocr]'` 或 `pip install rapidocr-onnxruntime`"
+                    ) from e
+                try:
+                    _OCR_ENGINE = RapidOCR()
+                except Exception as e:  # noqa: BLE001
+                    raise VisionError(f"本地 OCR 初始化失败: {e}") from e
     try:
         data = _ref_to_bytes(image_ref)
-        import tempfile
-        from pathlib import Path
+        from .util import tmp_image_path
 
-        tmp = Path(tempfile.gettempdir()) / "deepsee_ocr.png"
-        tmp.write_bytes(data)
-        result, _elapse = _OCR_ENGINE(tmp)
+        tmp = tmp_image_path()  # 唯一临时文件,避免多线程并发覆盖
+        try:
+            tmp.write_bytes(data)
+            result, _elapse = _OCR_ENGINE(tmp)
+        finally:
+            tmp.unlink(missing_ok=True)
     except VisionError:
         raise
     except Exception as e:  # noqa: BLE001

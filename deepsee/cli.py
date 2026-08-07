@@ -25,7 +25,7 @@ def _write_pid(name: str, pid: int) -> None:
     p = _pidfile()
     data = read_json_file(p, {})
     data[name] = pid
-    p.write_text(json.dumps(data))
+    p.write_text(json.dumps(data), encoding="utf-8")
 
 
 def _read_pid(name: str) -> int | None:
@@ -142,9 +142,22 @@ def _daemonize(name: str, cmd: list[str]) -> int:
         cprint(f"{name} 已在运行 (pid {pid})", "yellow")
         return 0
     log = config_home() / f"{name}.log"
-    with log.open("ab") as f:
-        proc = subprocess.Popen(cmd, stdout=f, stderr=subprocess.STDOUT,
-                                start_new_session=True, cwd=str(Path.home()))
+    kwargs: dict = {"stdout": log.open("ab"), "stderr": subprocess.STDOUT,
+                    "cwd": str(Path.home())}
+    if sys.platform == "win32":
+        # Windows: 脱离控制台 + 不弹窗;start_new_session 只映射 CREATE_NEW_PROCESS_GROUP
+        kwargs["creationflags"] = (
+            getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            | getattr(subprocess, "DETACHED_PROCESS", 0)
+            | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        )
+    else:
+        kwargs["start_new_session"] = True
+    try:
+        proc = subprocess.Popen(cmd, **kwargs)
+    except OSError as e:
+        cprint(f"{name} 启动失败: {e}", "red")
+        return 1
     _write_pid(name, proc.pid)
     time.sleep(1.0)
     if proc.poll() is not None:
@@ -209,6 +222,67 @@ def _cmd_status(args) -> int:
             cprint(f"    ✗ {p}", "red")
     else:
         cprint("    ✓ 全部就绪", "green")
+    return 1 if problems else 0
+
+
+def _cmd_doctor(args) -> int:
+    """一键诊断:配置、视觉链、上游、服务、集成、网络自检。"""
+    from .config import validate
+    from .installer import detect_agents
+
+    cfg = load()
+    cprint("\n  deepsee doctor — 诊断报告", "magenta", bold=True)
+    cprint("  " + "-" * 46)
+
+    problems = validate(cfg)
+    cprint("\n[配置]", "cyan", bold=True)
+    if problems:
+        for p in problems:
+            cprint(f"    ✗ {p}", "red")
+    else:
+        cprint("    ✓ 配置完整", "green")
+
+    chain = cfg.get("vision", {}).get("chain", [])
+    cprint("\n[视觉链]", "cyan", bold=True)
+    if chain:
+        for c in chain:
+            cprint(f"    {c.get('provider','?')}: {c.get('model','?')} key={'✓' if c.get('api_key') else '✗ 缺'}", "green" if c.get('api_key') else "yellow")
+    else:
+        cprint("    ✗ 未配置视觉链", "red")
+
+    up = cfg.get("upstream", {})
+    cprint("\n[上游]", "cyan", bold=True)
+    key_ok = bool(up.get("api_key"))
+    cprint(f"    {up.get('base_url','?')} · {up.get('model','?')} · format={up.get('format','auto')} key={'✓' if key_ok else '✗ 缺'}", "green" if key_ok else "yellow")
+
+    cprint("\n[服务]", "cyan", bold=True)
+    for name in ("proxy", "web"):
+        pid = _read_pid(name)
+        alive = pid and _is_alive(pid)
+        port = cfg["proxy"].get("port", 8081) if name == "proxy" else cfg["web"].get("port", 8090)
+        cprint(f"    {name:<6} http://127.0.0.1:{port}  {'● 运行中' if alive else '○ 未运行'}", "green" if alive else "dim")
+
+    cprint("\n[集成]", "cyan", bold=True)
+    from .util import read_json_file
+
+    local = read_json_file(Path.home() / ".claude" / "settings.local.json", {})
+    hooks = local.get("hooks", {}).get("PreToolUse", [])
+    has_hook = any("deepsee" in h.get("command", "") for e in hooks for h in e.get("hooks", []))
+    routed = (local.get("env", {}) or {}).get("ANTHROPIC_BASE_URL", "")
+    cprint(f"    Claude Code Hook: {'✓ 已注册' if has_hook else '— 未注册'}", "green" if has_hook else "dim")
+    cprint(f"    代理路由: {'✓ ANTHROPIC_BASE_URL→' + routed if routed else '— 未路由(仅 Hook 生效)'}", "green" if routed else "dim")
+
+    if args.verify and chain and key_ok:
+        cprint("\n[网络自检]", "cyan", bold=True)
+        try:
+            from .caption import Seer
+
+            text, prov = Seer.from_config(cfg).describe("")
+            cprint(f"    ✓ 视觉链路可用({prov}): {text[:40]}", "green")
+        except Exception as e:  # noqa: BLE001
+            cprint(f"    ✗ {str(e)[:120]}", "red")
+
+    cprint("\n  修复提示: `deepsee setup`(配 key) / `deepsee install`(装集成) / `deepsee route on`(全场景识图)", "cyan")
     return 1 if problems else 0
 
 
@@ -289,13 +363,15 @@ def _cmd_install(args) -> int:
 
     cfg = load()
     cprint("安装 deepsee 集成…", "cyan")
-    if args.hook or args.all:
+    # 默认全装;指定任一单项则只装该项
+    all_ = args.all or not (args.hook or args.mcp or args.skill or args.opencode)
+    if all_ or args.hook:
         install_claude_hook()
-    if args.mcp or args.all:
+    if all_ or args.mcp:
         install_mcp()
-    if args.skill:
+    if all_ or args.skill:
         install_codex_skill()
-    if args.opencode:
+    if all_ or args.opencode:
         patch_opencode(cfg, cfg["proxy"]["port"])
     cprint("\n完成。**重启 Claude Code** 后生效;回退用 `deepsee uninstall`", "green", bold=True)
     return 0
@@ -304,6 +380,7 @@ def _cmd_install(args) -> int:
 def _cmd_uninstall(args) -> int:
     from .installer import (
         restore_backups,
+        uninstall_claude_hook,
         uninstall_codex_skill,
         uninstall_mcp,
     )
@@ -312,8 +389,14 @@ def _cmd_uninstall(args) -> int:
     restored = restore_backups()
     for p in restored:
         cprint(f"  ✓ 已从备份恢复 {p}", "green")
+    uninstall_claude_hook()   # 移除 settings.json + settings.local.json 里的 hook,并置 hook:false
     uninstall_codex_skill()
     uninstall_mcp()
+    # 停掉后台服务
+    for name in ("proxy", "web"):
+        pid = _read_pid(name)
+        if pid and _is_alive(pid):
+            _cmd_stop(argparse.Namespace(name=name))
     p = config_home() / "services.pid"
     if p.exists():
         p.unlink()
@@ -379,9 +462,16 @@ def _cmd_route(args) -> int:
     env = data.setdefault("env", {})
     if args.mode == "on":
         port = load()["proxy"].get("port", 8081)
-        _daemonize("proxy", [sys.executable, "-m", "deepsee", "start", "--port", str(port)])
+        if _daemonize("proxy", [sys.executable, "-m", "deepsee", "start", "--port", str(port)]) != 0:
+            cprint("✗ 代理启动失败,未修改路由(先解决端口/配置问题)", "red")
+            return 1
+        # 探活:确认代理真的在监听才写 base_url,避免 Claude Code 打到死端口
+        if not _probe(f"http://127.0.0.1:{port}/health"):
+            cprint(f"✗ 代理未通过健康检查 http://127.0.0.1:{port}/health,未修改路由", "red")
+            _cmd_stop(argparse.Namespace(name="proxy"))
+            return 1
         env["ANTHROPIC_BASE_URL"] = f"http://127.0.0.1:{port}"
-        path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         cprint(f"✓ Claude Code 已路由到 deepsee 代理 http://127.0.0.1:{port}", "green", bold=True)
         cprint("  (写入 settings.local.json,覆盖 cc-switch 的 base_url 且不会被它重写)", "cyan")
         cprint("  重启 Claude Code 生效。此后所有图片(含粘贴/headless)都会在代理处转文字。", "cyan")
@@ -390,12 +480,23 @@ def _cmd_route(args) -> int:
         removed = env.pop("ANTHROPIC_BASE_URL", None)
         if not env:
             data.pop("env", None)
-        path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         if removed:
             cprint("✓ 已移除路由覆盖,Claude Code 恢复原 base_url(cc-switch)", "green")
         else:
             cprint("(本来就没有路由覆盖)", "cyan")
     return 0
+
+
+def _probe(url: str, timeout: float = 2.0) -> bool:
+    """轻量 HTTP GET 探活,返回是否 200。"""
+    try:
+        import urllib.request
+
+        with urllib.request.urlopen(url, timeout=timeout) as r:
+            return r.status == 200
+    except Exception:  # noqa: BLE001
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -452,12 +553,12 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("ui", help="一键启动代理 + 面板并打开浏览器")
     s.set_defaults(fn=_cmd_ui)
 
-    s = sub.add_parser("install", help="安装集成到本机(Claude Code Hook + MCP)")
-    s.add_argument("--all", action="store_true", default=True, help="安装 Hook + MCP(默认)")
-    s.add_argument("--hook", action="store_true")
-    s.add_argument("--mcp", action="store_true")
-    s.add_argument("--skill", action="store_true", help="顺带装 Codex skill")
-    s.add_argument("--opencode", action="store_true", help="顺带打 OpenCode 补丁")
+    s = sub.add_parser("install", help="安装集成到本机(默认 Hook + MCP;可单独指定)")
+    s.add_argument("--all", action="store_true", help="安装全部(默认行为)")
+    s.add_argument("--hook", action="store_true", help="只装 Claude Code Hook")
+    s.add_argument("--mcp", action="store_true", help="只装 MCP")
+    s.add_argument("--skill", action="store_true", help="只装 Codex skill")
+    s.add_argument("--opencode", action="store_true", help="只打 OpenCode 补丁")
     s.set_defaults(fn=_cmd_install)
 
     s = sub.add_parser("client-cfg", help="打印接入其他聊天客户端的配置")
@@ -466,6 +567,10 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("route", help="把 Claude Code 路由到 deepsee 代理(图片协议层转文字)")
     s.add_argument("mode", choices=["on", "off"])
     s.set_defaults(fn=_cmd_route)
+
+    s = sub.add_parser("doctor", help="一键诊断:配置/视觉/上游/服务/集成")
+    s.add_argument("-v", "--verify", action="store_true", help="做一次联网视觉自检")
+    s.set_defaults(fn=_cmd_doctor)
 
     s = sub.add_parser("status", help="查看状态")
     s.set_defaults(fn=_cmd_status)

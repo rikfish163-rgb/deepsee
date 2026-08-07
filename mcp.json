@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "deepsee": {
+      "command": "deepsee",
+      "args": ["mcp"],
+      "env": {}
+    }
+  }
+}

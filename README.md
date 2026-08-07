@@ -39,6 +39,27 @@ deepsee install            # 装进 Claude Code(Hook + MCP),重启即生效
 | **Codex skill** | `deepsee install --skill` | Codex Desktop / CLI |
 | **CLI** | `deepsee see/ocr/gen` | 终端直接看图/画图 |
 
+## 装成 MCP 插件(Cursor / Cline / 任意 MCP 客户端)
+
+仓库里自带 `mcp.json`,在 Cursor(Cursor 设置 → MCP)或 Cline 里指向它即可;
+或手动注册(把 `deepsee` 换成 `deepsee mcp` 的实际命令):
+
+```json
+{
+  "mcpServers": {
+    "deepsee": {
+      "command": "deepsee",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+- 全局安装后即可用:`pipx install deepsee`(或 `pip install deepsee`),然后 `deepsee mcp`。
+- 工具:`describe_image` / `ocr_image` / `generate_image` / `vision_status`。
+- 配置目录通过环境变量 `DEEPSEE_HOME` 覆盖(默认 `~/.deepsee`)。
+- 发布到 Smithery/mcp.so:见 `docs/CONFIGURATION.md` 的「MCP 发布」一节。
+
 ## 兼容性
 
 - **视觉供应商**:任意 OpenAI 兼容视觉端点 —— 智谱 GLM-4V-Flash(免费)、阿里百炼 qwen-vl、硅基流动、OpenAI、Gemini、Groq、OpenRouter、本地 vLLM/Ollama;多供应商**自动降级链**。

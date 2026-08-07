@@ -25,6 +25,26 @@ MIME = {
 # 静态文件字节缓存(启动后只读一次)
 _STATIC_CACHE: dict[str, tuple[bytes, str] | None] = {}
 
+# Seer 缓存(按配置 mtime 失效,避免每请求重建 VisionChain)
+_seer_cache = None
+_seer_mtime: int | None = None
+
+
+def _get_seer(cfg: dict) -> Seer:
+    global _seer_cache, _seer_mtime
+    import os
+
+    from .config import config_path
+
+    try:
+        m = os.stat(config_path()).st_mtime_ns
+    except OSError:
+        m = None
+    if _seer_cache is None or _seer_mtime != m:
+        _seer_cache = Seer.from_config(cfg)
+        _seer_mtime = m
+    return _seer_cache
+
 
 def _static(rel: str):
     if rel not in _STATIC_CACHE:
@@ -46,11 +66,11 @@ class WebHandler(BaseHTTPRequestHandler):
     # -- helpers ----------------------------------------------------------
     def _send(self, status: int, body: bytes, ctype: str = "application/json",
               extra: dict | None = None) -> None:
+        # 不加 CORS:前端同源(面板自己),避免恶意网页跨域读/写本地配置
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("X-Content-Type-Options", "nosniff")
         for k, v in (extra or {}).items():
             self.send_header(k, v)
         self.end_headers()
@@ -63,8 +83,23 @@ class WebHandler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length") or 0)
         return self.rfile.read(length) if length else b""
 
+    def _check_origin(self) -> bool:
+        """CSRF 防护:拒绝带非本机 Origin 的写请求。无 Origin(CLI/同源)放行。"""
+        origin = self.headers.get("Origin", "")
+        if not origin:
+            return True
+        try:
+            from urllib.parse import urlparse
+
+            host = urlparse(origin).hostname or ""
+        except Exception:  # noqa: BLE001
+            return False
+        return host in ("127.0.0.1", "localhost", "::1")
+
     def do_OPTIONS(self):
-        self._send(200, b"", "text/plain")
+        self.send_response(204)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     # -- GET --------------------------------------------------------------
     def do_GET(self):
@@ -72,7 +107,10 @@ class WebHandler(BaseHTTPRequestHandler):
         if path in ("/", "/index.html"):
             return self._send(200, _static("index.html")[0], MIME[".html"])
         if path.startswith("/static/"):
-            rel = path[len("/static/"):].replace("..", "")
+            rel = path[len("/static/"):]
+            # 静态文件只在顶层 basename,拒绝含路径分隔符(防目录穿越)
+            if not rel or "/" in rel or "\\" in rel:
+                return self._json(404, {"error": "not found"})
             cached = _static(rel)
             if cached:
                 body, ctype = cached
@@ -106,6 +144,8 @@ class WebHandler(BaseHTTPRequestHandler):
 
     # -- POST -------------------------------------------------------------
     def do_POST(self):
+        if not self._check_origin():
+            return self._json(403, {"error": "forbidden origin"})
         path = self.path.split("?")[0]
         raw = self._read_body()
         try:
@@ -127,6 +167,8 @@ class WebHandler(BaseHTTPRequestHandler):
 
     # -- PUT --------------------------------------------------------------
     def do_PUT(self):
+        if not self._check_origin():
+            return self._json(403, {"error": "forbidden origin"})
         path = self.path.split("?")[0]
         raw = self._read_body()
         if path != "/api/config":
@@ -143,9 +185,9 @@ class WebHandler(BaseHTTPRequestHandler):
     # -- API --------------------------------------------------------------
     def _api_test(self, body: dict):
         cfg = load()
-        seer = Seer.from_config(cfg)
         if not cfg.get("vision", {}).get("chain"):
             return self._json(400, {"error": "未配置视觉 API,请先到配置页填写"})
+        seer = _get_seer(cfg)
         source = body.get("source", "") or ""
         mode = body.get("mode", "")
         question = body.get("question", "")
@@ -302,16 +344,22 @@ def _status_payload() -> dict:
         "integration": {
             "base_url": f"http://127.0.0.1:{cfg['proxy'].get('port', 8080)}/v1",
             "model": cfg["upstream"].get("model", ""),
-            "master_key": cfg["proxy"].get("master_key", ""),
+            "master_key": _mask_key(cfg["proxy"].get("master_key", "")),
         },
     }
+
+
+def _mask_key(v: str) -> str:
+    if not v:
+        return ""
+    return "·" * max(3, len(v) - 4) + v[-4:]
 
 
 def serve_forever(host: str, port: int, cfg: dict = None):
     try:
         server = ThreadingHTTPServer((host, int(port)), WebHandler)
     except OSError as e:
-        if e.errno == 98:  # EADDRINUSE
+        if e.errno == 98 or getattr(e, 'winerror', None) == 10048:  # EADDRINUSE / WSAEADDRINUSE
             cprint(f"  端口 {port} 已被占用,换一个: deepsee web -p <新端口>", "red", bold=True)
         else:
             cprint(f"  启动失败: {e}", "red")

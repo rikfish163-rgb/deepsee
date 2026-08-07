@@ -33,11 +33,12 @@ def detect_agents() -> dict[str, bool]:
 
 
 def _deepsee_command() -> str:
-    """返回 deepsee 可执行命令(优先 console script,否则 python -m)。"""
+    """返回 deepsee 可执行命令(优先 console script,否则 python -m)。路径加引号,
+    兼容 Windows 含空格路径嵌入 settings.json 的 command 字段。"""
     exe = shutil.which("deepsee") or shutil.which("dsv")
     if exe:
-        return exe
-    return f"{sys.executable} -m deepsee"
+        return f'"{exe}"'
+    return f'"{sys.executable}" -m deepsee'
 
 
 def _backup(path: Path) -> Path | None:
@@ -211,13 +212,16 @@ def uninstall_codex_skill() -> bool:
 
 def install_mcp() -> bool:
     """注册 MCP 到 Claude Code 用户配置(不写项目级 .mcp.json,避免作用域不确定)。"""
+    import shlex
+
     cmd = f"{_deepsee_command()} mcp"
+    argv = shlex.split(cmd)  # 正确处理引号内的含空格路径
     claude = shutil.which("claude")
     if claude:
         try:
             r = subprocess.run(
-                [claude, "mcp", "add", "--scope", "user", "deepsee", "--", cmd.split()[0], *cmd.split()[1:]],
-                capture_output=True, text=True, timeout=30,
+                [claude, "mcp", "add", "--scope", "user", "deepsee", "--", *argv],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
             )
             if r.returncode == 0:
                 cprint("  ✓ 已注册 MCP(用户级)→ deepsee", "green")

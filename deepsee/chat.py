@@ -83,8 +83,22 @@ class Converter:
 # ---------------------------------------------------------------------------
 
 
+def _has_images(payload: dict) -> bool:
+    """消息里是否有图片块(纯文本聊天无需建 Seer/VisionChain)。"""
+    for m in payload.get("messages", []):
+        content = m.get("content")
+        if isinstance(content, list):
+            for item in content:
+                if isinstance(item, dict) and item.get("type") in ("image_url", "image"):
+                    return True
+    return False
+
+
 def build_openai_payload(cfg: dict, payload: dict) -> dict:
-    """把 payload 里的 image_url 块替换为文字描述,返回新 payload(不改原对象)。"""
+    """把 payload 里的 image_url 块替换为文字描述,返回新 payload(不改原对象)。
+    纯文本请求直接透传,不建 Seer(省一次 VisionChain 构建)。"""
+    if not _has_images(payload):
+        return payload
     conv = Converter(Seer.from_config(cfg))
     messages = payload.get("messages", [])
     new_messages, _ = conv.openai_messages(messages)

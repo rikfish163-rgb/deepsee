@@ -3,17 +3,21 @@
 from __future__ import annotations
 
 import base64
+import http.client
 import json
 import mimetypes
 import os
 import shutil
+import socket
 import ssl
 import subprocess
 import sys
 import tempfile
+import threading
 import urllib.error
 import urllib.request
 from pathlib import Path
+from urllib.parse import urlparse
 
 # ---------------------------------------------------------------------------
 # 路径 & 图片
@@ -71,11 +75,14 @@ def read_json_file(path: Path, default: dict) -> dict:
         return default
 
 
+_SECRET_KEYS = ("api_key", "master_key", "auth_token", "ANTHROPIC_AUTH_TOKEN")
+
+
 def mask_secrets(obj) -> None:
-    """原地把 dict 里的 api_key 掩码(保留后 4 位)。"""
+    """原地把 dict 里的密钥字段(api_key/master_key/auth_token…)掩码(保留后 4 位)。"""
     if isinstance(obj, dict):
         for k, v in obj.items():
-            if k == "api_key" and isinstance(v, str) and v:
+            if k in _SECRET_KEYS and isinstance(v, str) and v:
                 obj[k] = "·" * max(3, len(v) - 4) + v[-4:]
             else:
                 mask_secrets(v)
@@ -123,11 +130,38 @@ def _resize(data: bytes, max_px: int) -> bytes | None:
         return None
 
 
-def download_image_bytes(url: str, timeout: int = 30) -> bytes:
-    """下载网络图片为字节(供生成/识别时喂给视觉 API)。"""
-    req = urllib.request.Request(url, headers={"User-Agent": "deepsee/0.1"})
+def download_image_bytes(url: str, timeout: int = 30, max_bytes: int = 20 * 1024 * 1024) -> bytes:
+    """下载网络图片为字节(供生成/识别时喂给视觉 API)。
+
+    安全:只允许 http/https,拒绝内网/链路本地/环回地址(SSRF),限制响应大小(防 OOM)。
+    """
+    import ipaddress
+    import socket
+
+    if "://" not in url:
+        raise ValueError("URL 缺少 scheme")
+    scheme, rest = url.split("://", 1)
+    scheme = scheme.lower()
+    if scheme not in ("http", "https"):
+        raise ValueError(f"仅支持 http/https,收到 {scheme}")
+    host = rest.split("/", 1)[0].split(":", 1)[0]
+    # 解析并拦截内网地址(SSRF:本地文件/云元数据/内网服务)
+    try:
+        ip = socket.getaddrinfo(host, None)[0][4][0]
+        addr = ipaddress.ip_address(ip)
+        if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
+            raise ValueError(f"拒绝内网/环回地址: {host}")
+    except socket.gaierror:
+        raise ValueError(f"无法解析域名: {host}")
+    req = urllib.request.Request(url, headers={"User-Agent": DEFAULT_UA})
     with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.read()
+        cl = r.headers.get("Content-Length")
+        if cl and cl.isdigit() and int(cl) > max_bytes:
+            raise ValueError(f"响应过大(>{max_bytes // 1024 // 1024}MB)")
+        data = r.read(max_bytes + 1)
+        if len(data) > max_bytes:
+            raise ValueError(f"响应过大(>{max_bytes // 1024 // 1024}MB)")
+        return data
 
 
 # ---------------------------------------------------------------------------
@@ -149,6 +183,107 @@ DEFAULT_UA = (
 )
 
 
+# ---- keep-alive 连接池(http.client,避免每请求 TLS 握手) ----
+
+_pool: dict[tuple[str, str, int], http.client.HTTPConnection] = {}
+_pool_lock = threading.Lock()
+_NET_ERRS = (ConnectionError, socket.timeout, http.client.RemoteDisconnected,
+             http.client.CannotSendRequest, http.client.BadStatusLine, OSError)
+
+
+def _conn_cls(scheme: str):
+    return http.client.HTTPSConnection if scheme == "https" else http.client.HTTPConnection
+
+
+def _get_pooled(url: str, timeout: int):
+    u = urlparse(url)
+    scheme = u.scheme or "https"
+    host = u.hostname or ""
+    port = u.port or (443 if scheme == "https" else 80)
+    key = (scheme, host, port)
+    with _pool_lock:
+        conn = _pool.get(key)
+        if conn is None:
+            conn = _conn_cls(scheme)(host, port, timeout=timeout)
+            _pool[key] = conn
+    return conn, key
+
+
+def _drop_pooled(key, conn) -> None:
+    with _pool_lock:
+        try:
+            conn.close()
+        except Exception:  # noqa: BLE001
+            pass
+        if _pool.get(key) is conn:
+            del _pool[key]
+
+
+def close_http_pool() -> None:
+    """关闭并清空连接池(测试/退出时调用,释放 keep-alive 连接)。"""
+    with _pool_lock:
+        for c in _pool.values():
+            try:
+                c.close()
+            except Exception:  # noqa: BLE001
+                pass
+        _pool.clear()
+
+
+def _url_path(u) -> str:
+    p = u.path or "/"
+    return p + ("?" + u.query if u.query else "")
+
+
+def _do_request(conn, method: str, path: str, data, headers):
+    conn.request(method, path, body=data, headers=headers)
+    resp = conn.getresponse()
+    body = resp.read()
+    return resp.status, dict(resp.getheaders()), body
+
+
+def _raw_request(url: str, payload, headers, timeout: int, method: str | None):
+    """带连接复用 + 失效重连 + 重定向。返回 (status, rheaders, body)。"""
+    data = json.dumps(payload).encode("utf-8") if payload is not None else None
+    m = (method or ("POST" if data is not None else "GET")).upper()
+    cur = url
+    for _ in range(6):  # 最多跟随 5 次重定向
+        u = urlparse(cur)
+        scheme = u.scheme or "https"
+        if scheme not in ("http", "https"):
+            raise HttpError(0, f"unsupported scheme: {scheme}")
+        conn, key = _get_pooled(cur, timeout)
+        try:
+            status, rheaders, body = _do_request(conn, m, _url_path(u), data, headers)
+        except _NET_ERRS as e:
+            _drop_pooled(key, conn)  # keep-alive 连接可能已被服务端关闭,换新重试一次
+            conn, key = _get_pooled(cur, timeout)
+            try:
+                status, rheaders, body = _do_request(conn, m, _url_path(u), data, headers)
+            except _NET_ERRS as e2:
+                _drop_pooled(key, conn)
+                raise HttpError(0, f"network: {e2}") from e2
+            except ssl.SSLError as e2:
+                _drop_pooled(key, conn)
+                raise HttpError(0, f"SSL: {e2}") from e2
+        except ssl.SSLError as e:
+            _drop_pooled(key, conn)
+            raise HttpError(0, f"SSL: {e}") from e
+        if status in (301, 302, 303, 307, 308):
+            loc = rheaders.get("Location")
+            if not loc:
+                return status, rheaders, body
+            if status in (301, 302, 303) and m == "POST":
+                m, data = "GET", None
+            if loc.startswith(("http://", "https://")):
+                cur = loc
+            else:
+                cur = urlparse(cur)._replace(path="", query="").geturl() + loc
+            continue
+        return status, rheaders, body
+    raise HttpError(0, "too many redirects")
+
+
 def http_json(
     url: str,
     payload: dict | None = None,
@@ -157,26 +292,11 @@ def http_json(
     method: str | None = None,
 ):
     """POST/GET JSON,返回 (status, json)。失败抛 HttpError。"""
-    data = None
     hdrs = {"Accept": "application/json", "Content-Type": "application/json",
             "User-Agent": DEFAULT_UA}
     if headers:
         hdrs.update(headers)
-    if payload is not None:
-        data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(url, data=data, headers=hdrs, method=method)
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            body = r.read()
-            status = r.status
-    except urllib.error.HTTPError as e:
-        raise HttpError(e.code, e.read().decode("utf-8", "replace")) from e
-    except urllib.error.URLError as e:
-        raise HttpError(0, str(e)) from e
-    except ssl.SSLError as e:
-        raise HttpError(0, f"SSL: {e}") from e
-    except TimeoutError:
-        raise HttpError(0, "timeout") from None
+    status, _rh, body = _raw_request(url, payload, hdrs, timeout, method)
     try:
         return status, json.loads(body.decode("utf-8", "replace"))
     except (json.JSONDecodeError, UnicodeDecodeError):
@@ -194,15 +314,24 @@ def http_stream(
             "User-Agent": DEFAULT_UA}
     if headers:
         hdrs.update(headers)
-    req = urllib.request.Request(
-        url, data=json.dumps(payload).encode("utf-8"), headers=hdrs, method="POST"
-    )
+    data = json.dumps(payload).encode("utf-8")
+    u = urlparse(url)
+    scheme = u.scheme or "https"
+    if scheme not in ("http", "https"):
+        raise HttpError(0, f"unsupported scheme: {scheme}")
+    conn = _conn_cls(scheme)(u.hostname or "", u.port or (443 if scheme == "https" else 80),
+                             timeout=timeout)
     try:
-        resp = urllib.request.urlopen(req, timeout=timeout)
-    except urllib.error.HTTPError as e:
-        raise HttpError(e.code, e.read().decode("utf-8", "replace")) from e
-    except urllib.error.URLError as e:
-        raise HttpError(0, str(e)) from e
+        conn.request("POST", _url_path(u), body=data, headers=hdrs)
+        resp = conn.getresponse()
+        if resp.status >= 400:
+            body = resp.read().decode("utf-8", "replace")
+            conn.close()
+            raise HttpError(resp.status, body)
+    except _NET_ERRS as e:
+        raise HttpError(0, f"network: {e}") from e
+    except ssl.SSLError as e:
+        raise HttpError(0, f"SSL: {e}") from e
 
     def gen():
         try:
@@ -212,7 +341,7 @@ def http_stream(
                     break
                 yield line.decode("utf-8", "replace")
         finally:
-            resp.close()
+            conn.close()
 
     return gen()
 
@@ -262,9 +391,18 @@ def _capture_linux(png: Path) -> Path | None:
                 return png
         except Exception:
             pass
-    # 2) 全屏/选区截图工具
+    # 2) Wayland:grim + slurp 选区截图
+    if shutil.which("grim") and shutil.which("slurp"):
+        try:
+            region = subprocess.run(["slurp"], capture_output=True, text=True, timeout=15)
+            if region.returncode == 0 and region.stdout.strip():
+                if _run(["grim", "-g", region.stdout.strip(), str(png)]):
+                    return png
+        except Exception:
+            pass
+    # 3) 全屏/选区截图工具(X11/通用)
     if shutil.which("gnome-screenshot"):
-        if _run(["gnome-screenshot", "-a", "-f", str(png)]):
+        if _run(["gnome-screenshot", "-a", "-f", str(png)], timeout=30):
             return png
     if shutil.which("spectacle"):
         if _run(["spectacle", "-b", "-n", "-o", str(png)]):
@@ -276,7 +414,7 @@ def _capture_linux(png: Path) -> Path | None:
         if _run(["import", str(png)]):
             return png
     if shutil.which("flameshot"):
-        if _run(["flameshot", "gui", "-s", str(png)]):
+        if _run(["flameshot", "gui", "-p", str(png)]):  # -p 指定保存路径(不是 -s)
             return png
     return None
 
@@ -442,7 +580,7 @@ def cprint(text: str, color: str = "", bold: bool = False) -> None:
     """带 ANSI 颜色的打印;非 tty 自动降级为纯文本。"""
     colors = {
         "red": "31", "green": "32", "yellow": "33",
-        "blue": "34", "magenta": "35", "cyan": "36",
+        "blue": "34", "magenta": "35", "cyan": "36", "dim": "2",
     }
     if not sys.stdout.isatty():
         print(text)

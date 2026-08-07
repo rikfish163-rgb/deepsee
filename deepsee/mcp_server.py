@@ -13,6 +13,7 @@ import json
 import sys
 from typing import Any
 
+from . import __version__
 from .caption import Seer
 from .config import load, validate, vision_chain
 from .generate import ImageGenClient
@@ -57,7 +58,7 @@ TOOLS: list[dict] = [
     },
 ]
 
-SERVER_INFO = {"name": "deepsee", "version": "0.1.0"}
+SERVER_INFO = {"name": "deepsee", "version": __version__}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -131,12 +132,15 @@ class McpServer:
 
     def _describe(self, source: str, mode: str, question: str) -> str:
         if not self.cfg.get("vision", {}).get("chain"):
-            return "未配置视觉 API。请先运行 `deepsee setup` 或编辑 ~/.deepsee/config.json。"
+            raise ValueError("未配置视觉 API。请先运行 `deepsee setup` 或编辑 ~/.deepsee/config.json。")
         seer = self._seer()
         text, provider = seer.describe(source, mode=mode, question=question)
         return f"[provider: {provider}]\n{text}"
 
     def _generate(self, args: dict) -> str:
+        gen = self.cfg.get("generation", {})
+        if not gen.get("api_key") or not gen.get("base_url"):
+            raise ValueError("未配置文生图后端。请先运行 `deepsee setup` 或在配置页填写。")
         client = ImageGenClient.from_config(self.cfg, size=args.get("size", ""))
         path = client.generate(args.get("prompt", ""))
         return f"图片已保存: {path}"

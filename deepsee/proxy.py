@@ -169,10 +169,24 @@ class ProxyHandler(BaseHTTPRequestHandler):
             raise ProxyError(502, str(e)) from e
 
     # -- 转发 ------------------------------------------------------------
+    _shared_seer: Converter | None = None
+    _shared_seer_mtime: int | None = None
+
     def _seer(self) -> Converter:
-        if self.seer is None:
-            self.seer = Converter(Seer.from_config(self.cfg))
-        return self.seer
+        """进程级共享 Converter(ThreadingHTTPServer 每连接 new handler,不能靠 self 缓存),
+        配置 mtime 变化才重建。"""
+        import os
+
+        from .config import config_path
+
+        try:
+            m = os.stat(config_path()).st_mtime_ns
+        except OSError:
+            m = None
+        if ProxyHandler._shared_seer is None or ProxyHandler._shared_seer_mtime != m:
+            ProxyHandler._shared_seer = Converter(Seer.from_config(self.cfg))
+            ProxyHandler._shared_seer_mtime = m
+        return ProxyHandler._shared_seer
 
     def _post_json(self, url: str, payload: dict, headers: dict, timeout: int = 120):
         """上游 POST,统一错误包装,返回 (status, data)。"""
@@ -299,6 +313,9 @@ def _as_text(content: Any) -> str:
 def run_proxy(host: str, port: int, cfg: dict) -> ThreadingHTTPServer:
     ProxyHandler.cfg = cfg
     ProxyHandler.seer = None
+    # 重置进程级共享 Converter(避免跨进程/跨测试残留旧配置的缓存)
+    ProxyHandler._shared_seer = None
+    ProxyHandler._shared_seer_mtime = None
     server = ThreadingHTTPServer((host, port), ProxyHandler)
     return server
 
@@ -307,7 +324,7 @@ def serve_forever(host: str, port: int, cfg: dict):
     try:
         server = run_proxy(host, port, cfg)
     except OSError as e:
-        if e.errno == 98:  # EADDRINUSE
+        if e.errno == 98 or getattr(e, 'winerror', None) == 10048:  # EADDRINUSE / WSAEADDRINUSE
             cprint(f"  端口 {port} 已被占用,换一个: deepsee start -p <新端口>", "red", bold=True)
         else:
             cprint(f"  启动失败: {e}", "red")

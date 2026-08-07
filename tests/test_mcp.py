@@ -156,3 +156,14 @@ def test_hook_json_contract(tmp_path):
     upd = data["hookSpecificOutput"]["hookSpecificOutput"]["updatedInput"]
     assert upd["file_path"].endswith(".txt")
     assert data["hookSpecificOutput"]["permissionDecision"] == "allow"
+
+
+def test_describe_no_vision_is_error(monkeypatch):
+    """未配置视觉链时 describe_image 返回 isError:true,而非假成功。"""
+    server = McpServer()
+    cfg = {"vision": {"chain": []}, "upstream": {}, "generation": {}}
+    server.cfg = cfg
+    monkeypatch.setattr("deepsee.mcp_server.load", lambda: cfg)
+    out = _call(server, "tools/call", {"name": "describe_image", "arguments": {}})
+    assert out["result"]["isError"] is True
+    assert "视觉" in out["result"]["content"][0]["text"]

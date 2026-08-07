@@ -65,3 +65,27 @@ def test_b64_bytes_variants():
 def test_truncate():
     assert util.truncate("x" * 500) == "x" * 397 + "..."
     assert util.truncate("short") == "short"
+
+
+def test_download_rejects_file_scheme():
+    """SSRF 防护:拒绝非 http/https scheme。"""
+    import pytest
+
+    from deepsee.util import download_image_bytes
+
+    with pytest.raises(ValueError):
+        download_image_bytes("file:///etc/passwd")
+    with pytest.raises(ValueError):
+        download_image_bytes("ftp://example.com/a.png")
+
+
+def test_download_rejects_private_ip():
+    """SSRF 防护:拒绝内网/环回/链路本地地址。"""
+    import pytest
+
+    from deepsee.util import download_image_bytes
+
+    for url in ("http://127.0.0.1/secret", "http://169.254.169.254/latest/meta-data/",
+                "http://10.0.0.1/x"):
+        with pytest.raises(ValueError):
+            download_image_bytes(url)
