@@ -21,9 +21,10 @@ def test_defaults_roundtrip(tmp_path, monkeypatch):
     assert path == str(tmp_path / "config.json")
     reloaded = config.load()
     assert reloaded["vision"]["chain"][0]["provider"] == "zhipu"
-    # 保存后权限应收紧
+    # 保存后权限应收紧(POSIX;Windows 的 chmod 是 no-op,跳过)
     import os
-    assert (os.stat(path).st_mode & 0o777) in (0o600, 0o400)
+    if os.name != "nt":
+        assert (os.stat(path).st_mode & 0o777) in (0o600, 0o400)
 
 
 def test_validate_problems():
