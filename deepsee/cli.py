@@ -279,15 +279,24 @@ def _cmd_mcp(args) -> int:
 
 
 def _cmd_uninstall(args) -> int:
-    from .installer import uninstall_claude_hook, uninstall_codex_skill, unpatch_opencode
+    from .installer import (
+        restore_backups,
+        uninstall_codex_skill,
+        uninstall_mcp,
+    )
 
-    uninstall_claude_hook()
+    cprint("正在回退安装…", "cyan")
+    restored = restore_backups()
+    for p in restored:
+        cprint(f"  ✓ 已从备份恢复 {p}", "green")
     uninstall_codex_skill()
-    unpatch_opencode()
+    uninstall_mcp()
     p = config_home() / "services.pid"
     if p.exists():
         p.unlink()
-    cprint("已卸载(保留 ~/.deepsee/config.json,可手动删除)", "cyan")
+    if not restored:
+        cprint("  (未发现需要恢复的备份)", "dim")
+    cprint("已回退。~/.deepsee/config.json 保留,可手动删除;要清掉重来运行 `deepsee setup`", "cyan")
     return 0
 
 

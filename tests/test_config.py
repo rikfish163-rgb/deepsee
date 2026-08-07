@@ -41,6 +41,17 @@ def test_provider_presets():
     assert config.GEN_PROVIDERS["siliconflow"]["model"].startswith("black-forest-labs")
 
 
+def test_validate_exempts_nokey_providers():
+    """demo / 本地 OCR 不需要 api_key 与 base_url。"""
+    cfg = config.load()
+    cfg["vision"]["chain"] = [
+        {"provider": "demo", "base_url": "", "api_key": "", "model": ""},
+        {"provider": "local-ocr", "base_url": "", "api_key": "", "model": ""},
+    ]
+    problems = config.validate(cfg)
+    assert not any(("视觉链" in p) and ("key" in p or "base_url" in p) for p in problems)
+
+
 def test_is_target_model():
     assert config.is_target_model("deepseek-v4-flash")
     assert config.is_target_model("DeepSeek-V3")

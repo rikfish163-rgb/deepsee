@@ -27,6 +27,23 @@ deepsee client-cfg                    # 打印接入 Cherry Studio 等客户端�
 | 想给 DeepSeek 加图片能力但不会写 MCP | 内置轻量 MCP server(`describe_image` / `generate_image`),一键注册 |
 | 想在 Cherry Studio / ChatBox 里用 DeepSeek 看图 | 面板「状态」页一键复制接入配置,或 `deepsee client-cfg` |
 
+## 没有 API key?也能用
+
+`deepsee setup` 时选「演示模式」或「本地 OCR」即可零 key 先跑:
+
+- **演示模式(demo)**:不调用任何 API,返回固定文案,体验完整流程(CLI/网页对话/识图)
+- **本地 OCR(local-ocr)**:离线提取图片文字,`pip install 'deepsee[ocr]'` 后即可,永不花钱
+- 之后随时补 key:面板「配置」页或 `deepsee setup` 重跑
+
+## 安全回退
+
+向导在写任何文件前会先给你**摘要确认**(答 `n` = 不修改任何文件)。想撤销安装:
+
+```bash
+deepsee uninstall   # 从 .deepsee.bak 备份恢复 settings.json/opencode.json,
+                    # 移除 Codex skill 与 MCP 注册
+```
+
 ## 兼容矩阵
 
 | 载体 | 集成方式 | 状态 |

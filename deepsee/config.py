@@ -100,7 +100,25 @@ PROVIDERS: dict[str, dict[str, str]] = {
         "fee": "",
         "note": "填 base_url + api_key + model",
     },
+    # 免 API key 的本地/演示 provider
+    "demo": {
+        "label": "演示模式(无需 API key,先体验流程)",
+        "base_url": "",
+        "model": "",
+        "fee": "免费",
+        "note": "不调真实 API,返回固定文案",
+    },
+    "local-ocr": {
+        "label": "本地 OCR(离线免 key,提取图片文字)",
+        "base_url": "",
+        "model": "",
+        "fee": "免费离线",
+        "note": "需安装 deepsee[ocr]",
+    },
 }
+
+# 不需要 api_key / base_url 的 provider(本地或演示)
+NO_KEY_PROVIDERS = {"demo", "local-ocr"}
 
 # 文生图后端预设(OpenAI 兼容 /images/generations)
 GEN_PROVIDERS: dict[str, dict[str, str]] = {
@@ -253,6 +271,8 @@ def validate(cfg: dict) -> list[str]:
     if not chain:
         problems.append("视觉链为空:运行 `deepsee setup` 或编辑 config.json 添加视觉 API")
     for i, item in enumerate(chain):
+        if item.get("provider") in NO_KEY_PROVIDERS:
+            continue  # demo / 本地 OCR 不需要 key
         if not item.get("api_key"):
             problems.append(f"视觉链第 {i + 1} 项缺少 api_key")
         if not item.get("base_url"):

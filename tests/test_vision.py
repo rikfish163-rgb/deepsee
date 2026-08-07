@@ -82,3 +82,29 @@ def test_chain_all_fail(monkeypatch):
 def test_chain_empty():
     with pytest.raises(VisionError):
         VisionChain([]).caption(PNG, "描述")
+
+
+def test_demo_provider_no_network():
+    """演示模式:零网络,返回固定文案。"""
+    chain = VisionChain([{"provider": "demo", "base_url": "", "api_key": "", "model": ""}])
+    text, provider = chain.caption(PNG, "描述一下")
+    assert provider == "demo"
+    assert "演示模式" in text
+
+
+def test_local_ocr_missing_dependency_hint(monkeypatch):
+    """未装 rapidocr 时给出安装提示。"""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *a, **k):
+        if name.startswith("rapidocr"):
+            raise ImportError("not installed")
+        return real_import(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    chain = VisionChain([{"provider": "local-ocr", "base_url": "", "api_key": "", "model": ""}])
+    with pytest.raises(VisionError) as ei:
+        chain.caption(PNG, "提取文字")
+    assert "deepsee[ocr]" in str(ei.value)

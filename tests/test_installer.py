@@ -73,3 +73,50 @@ def test_install_claude_hook_idempotent_removal(tmp_path, monkeypatch):
     assert installer.uninstall_claude_hook() is True
     data = json.loads(settings.read_text())
     assert data["hooks"]["PreToolUse"] == []
+
+
+def test_restore_backups(tmp_path, monkeypatch):
+    """回退:从 .deepsee.bak 恢复被修改的配置文件。"""
+    claude_dir = tmp_path / ".claude"
+    claude_dir.mkdir(parents=True)
+    settings = claude_dir / "settings.json"
+    settings.write_text('{"modified": true}')
+    (claude_dir / "settings.json.deepsee.bak").write_text('{"original": true}')
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude_dir))
+    monkeypatch.setattr(installer.Path, "home", classmethod(lambda cls: tmp_path))
+    restored = installer.restore_backups()
+    assert str(settings) in restored
+    assert json.loads(settings.read_text()) == {"original": True}
+
+
+def test_setup_wizard_noninteractive_demo(tmp_path, monkeypatch):
+    """非交互跑通向导:选 demo 供应商,不触碰任何真实配置。"""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("DEEPSEE_HOME", str(tmp_path / ".deepsee"))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / ".claude"))
+    monkeypatch.setattr(installer.Path, "home", classmethod(lambda cls: tmp_path))
+
+    class _NoTty:
+        def isatty(self):
+            return False
+
+    monkeypatch.setattr(installer.sys, "stdin", _NoTty())
+    monkeypatch.setattr(installer.shutil, "which", lambda _: None)
+    monkeypatch.chdir(tmp_path)
+
+    # 供应商选择返回 demo 的序号,其余字段用默认值
+    demo_idx = list(installer.PROVIDERS.keys()).index("demo") + 1
+    monkeypatch.setattr(
+        installer, "_ask",
+        lambda prompt, default="": (str(demo_idx) if "选择" in prompt else default),
+    )
+
+    assert installer.setup_wizard() == 0
+
+    from deepsee.config import load
+
+    cfg = load()
+    assert cfg["vision"]["chain"][0]["provider"] == "demo"
+    # 只写了配置 + 项目 .mcp.json,未动真实 home 的任何文件
+    assert (tmp_path / ".deepsee" / "config.json").exists()
+    assert (tmp_path / ".mcp.json").exists()

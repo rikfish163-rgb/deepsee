@@ -23,6 +23,8 @@ dependencies = []
 mcp = ["mcp>=1.0"]
 # 图片缩放加速（可选，省 token/费用）
 image = ["Pillow>=9.0"]
+# 本地离线 OCR（免 API key 提取图片文字）
+ocr = ["rapidocr-onnxruntime>=1.3", "numpy", "Pillow>=9.0"]
 dev = ["pytest>=7.0"]
 
 [project.scripts]

@@ -168,6 +168,19 @@ def test_chat_requires_vision(web_env):
     assert status == 400
 
 
+def test_chat_demo_reply_when_no_upstream_key(web_env):
+    """无上游 key 时返回演示回复,界面仍可点通。"""
+    from deepsee.config import save
+
+    cfg = web_env["cfg"]
+    cfg["upstream"]["api_key"] = ""
+    save(cfg)
+    status, body = _req(web_env["port"], "POST", "/api/chat",
+                        {"messages": [{"role": "user", "content": "hi"}], "stream": False})
+    assert status == 200
+    assert "演示" in json.loads(body)["text"]
+
+
 def test_status_includes_integration(web_env):
     status, body = _req(web_env["port"], "GET", "/api/status")
     data = json.loads(body)

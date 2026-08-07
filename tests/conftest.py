@@ -9,6 +9,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _isolate_deepsee_home(tmp_path, monkeypatch):
+    """每个测试都用独立的临时配置目录,绝不读写真实 ~/.deepsee。"""
+    monkeypatch.setenv("DEEPSEE_HOME", str(tmp_path / ".deepsee"))
+
+
 class Recorder:
     """记录收到的最后一个请求体,便于断言。"""
 

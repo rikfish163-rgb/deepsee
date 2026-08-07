@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .util import HttpError, TINY_PNG_DATA_URI, http_json, safe_join
+from .util import HttpError, TINY_PNG_DATA_URI, cprint, http_json, safe_join
 
 
 class VisionError(Exception):
@@ -109,11 +109,32 @@ class VisionChain:
         image_ref2: str | None = None,
         verbose: bool = False,
     ) -> tuple[str, str]:
-        """识别一张/两张图,返回 (文字, 成功provider)。全部失败抛 VisionError。"""
+        """识别一张/两张图,返回 (文字, 成功provider)。全部失败抛 VisionError。
+
+        特殊 provider 无需 API key:
+        - demo:      演示模式,返回固定文案,零网络
+        - local-ocr: 本地 OCR(rapidocr),离线提取图片文字
+        """
         if not self.clients:
             raise VisionError("未配置视觉供应商,请运行 `deepsee setup`")
         last_err = ""
         for c in self.clients:
+            if c.provider == "demo":
+                text = _demo_text(prompt)
+                if verbose:
+                    cprint("  ✓ 演示模式(未调用真实 API)", "green")
+                return text, "demo"
+            if c.provider == "local-ocr":
+                try:
+                    text = _local_ocr(image_ref, c.provider)
+                except VisionError as e:
+                    last_err = str(e)
+                    if verbose:
+                        cprint(f"  ✗ local-ocr 失败: {str(e)[:120]}", "yellow")
+                    continue
+                if verbose:
+                    cprint("  ✓ 本地 OCR 完成", "green")
+                return text, "local-ocr"
             try:
                 messages = c.build_messages(image_ref, prompt, image_ref2)
                 text = c.chat(messages)
@@ -132,3 +153,70 @@ class VisionChain:
 
                     cprint(f"  ✗ {c.provider} 失败: {str(e)[:120]}", "yellow")
         raise VisionError(f"视觉链路全部失败: {last_err}")
+
+
+def _demo_text(prompt: str) -> str:
+    return (
+        "【演示模式 · 未调用任何视觉 API】\n"
+        "图片已成功接收,整个流程运转正常。\n"
+        "要开始真实识图,任选其一:\n"
+        "  1. 智谱 GLM-4V-Flash(免费):跑 `deepsee setup` 重填 api_key\n"
+        "  2. 本地 OCR(离线免 key):`pip install 'deepsee[ocr]'`,再把视觉供应商设为 local-ocr\n"
+        "  3. 在 Web 面板「配置」页直接编辑 api_key 保存"
+    )
+
+
+def _ref_to_bytes(image_ref: str) -> bytes:
+    """把 data URI / URL 解析为图片字节。"""
+    if image_ref.startswith("data:"):
+        import base64
+
+        return base64.b64decode(image_ref.split(",", 1)[1])
+    if image_ref.startswith(("http://", "https://")):
+        from .util import download_image_bytes
+
+        return download_image_bytes(image_ref)
+    from pathlib import Path
+
+    return Path(image_ref).read_bytes()
+
+
+_OCR_ENGINE = None
+
+
+def _local_ocr(image_ref: str, provider: str) -> str:
+    """离线 OCR:把图片文字提取为文本(无需任何 API key)。"""
+    global _OCR_ENGINE
+    if _OCR_ENGINE is None:
+        try:
+            from rapidocr_onnxruntime import RapidOCR
+        except ImportError as e:
+            raise VisionError(
+                "本地 OCR 未安装:运行 `pip install 'deepsee[ocr]'` 或 `pip install rapidocr-onnxruntime`"
+            ) from e
+        try:
+            _OCR_ENGINE = RapidOCR()
+        except Exception as e:  # noqa: BLE001
+            raise VisionError(f"本地 OCR 初始化失败: {e}") from e
+    try:
+        data = _ref_to_bytes(image_ref)
+        import tempfile
+        from pathlib import Path
+
+        tmp = Path(tempfile.gettempdir()) / "deepsee_ocr.png"
+        tmp.write_bytes(data)
+        result, _elapse = _OCR_ENGINE(tmp)
+    except VisionError:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise VisionError(f"本地 OCR 识别失败: {e}") from e
+    if not result:
+        return "未检测到文字。"
+    lines = []
+    for item in result:
+        # item = [box, text, score]
+        try:
+            lines.append(item[1])
+        except (IndexError, TypeError):
+            continue
+    return "\n".join(lines)

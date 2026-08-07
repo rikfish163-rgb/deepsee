@@ -185,15 +185,31 @@ class WebHandler(BaseHTTPRequestHandler):
         cfg = load()
         if not cfg.get("vision", {}).get("chain"):
             return self._json(400, {"error": "未配置视觉 API,请先到配置页填写"})
-        if not cfg.get("upstream", {}).get("api_key"):
-            return self._json(400, {"error": "未配置上游 DeepSeek api_key(对话需要)"})
+        stream = bool(body.get("stream"))
         messages = body.get("messages", [])
         payload = {
             "model": cfg["upstream"].get("model", ""),
             "messages": messages,
             "max_tokens": 4096,
         }
-        if not body.get("stream"):
+        # 无上游 key → 演示回复,让对话界面零 key 也能点通
+        if not cfg.get("upstream", {}).get("api_key"):
+            demo = (
+                "【演示】上游 DeepSeek 尚未配置 api_key,暂无法生成真实回复。\n"
+                "在「配置」页填入 DeepSeek 的 api_key 保存后即可对话;"
+                "对话里贴的图片会自动转成文字再交给 DeepSeek。"
+            )
+            if not stream:
+                return self._json(200, {"text": demo})
+            self._begin_sse()
+            try:
+                self._sse({"delta": demo})
+                self._sse({"done": True})
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            return
+
+        if not stream:
             try:
                 text = chat_openai(cfg, payload)
             except ChatError as e:
@@ -201,13 +217,7 @@ class WebHandler(BaseHTTPRequestHandler):
             return self._json(200, {"text": text})
 
         # SSE 流式
-        self.send_response(200)
-        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
-        self.send_header("Cache-Control", "no-cache")
-        self.send_header("Connection", "close")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.end_headers()
-        self.close_connection = True
+        self._begin_sse()
         try:
             for delta in iter_chat(cfg, payload):
                 self._sse({"delta": delta})
@@ -223,6 +233,15 @@ class WebHandler(BaseHTTPRequestHandler):
                 self.wfile.flush()
             except (BrokenPipeError, ConnectionResetError):
                 pass
+
+    def _begin_sse(self) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "close")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.close_connection = True
 
     def _sse(self, obj: dict) -> None:
         data = json.dumps(obj, ensure_ascii=False)
