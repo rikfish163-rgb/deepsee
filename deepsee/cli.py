@@ -369,6 +369,35 @@ def _open_browser(url: str) -> None:
         pass
 
 
+def _cmd_route(args) -> int:
+    """把 Claude Code 的 ANTHROPIC_BASE_URL 覆盖到 deepsee 代理(写在 settings.local.json,
+    覆盖 cc-switch 的 settings.json 值且不被它重写)。图片块在代理处转文字,覆盖粘贴图/headless。"""
+    from .util import read_json_file
+
+    path = Path.home() / ".claude" / "settings.local.json"
+    data = read_json_file(path, {})
+    env = data.setdefault("env", {})
+    if args.mode == "on":
+        port = load()["proxy"].get("port", 8081)
+        _daemonize("proxy", [sys.executable, "-m", "deepsee", "start", "--port", str(port)])
+        env["ANTHROPIC_BASE_URL"] = f"http://127.0.0.1:{port}"
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+        cprint(f"✓ Claude Code 已路由到 deepsee 代理 http://127.0.0.1:{port}", "green", bold=True)
+        cprint("  (写入 settings.local.json,覆盖 cc-switch 的 base_url 且不会被它重写)", "cyan")
+        cprint("  重启 Claude Code 生效。此后所有图片(含粘贴/headless)都会在代理处转文字。", "cyan")
+        cprint("  注意:Claude Code 的对话能力依赖 deepsee 代理常驻且上游额度可用。", "yellow")
+    else:
+        removed = env.pop("ANTHROPIC_BASE_URL", None)
+        if not env:
+            data.pop("env", None)
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+        if removed:
+            cprint("✓ 已移除路由覆盖,Claude Code 恢复原 base_url(cc-switch)", "green")
+        else:
+            cprint("(本来就没有路由覆盖)", "cyan")
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # 主入口
 # ---------------------------------------------------------------------------
@@ -433,6 +462,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("client-cfg", help="打印接入其他聊天客户端的配置")
     s.set_defaults(fn=_cmd_client_cfg)
+
+    s = sub.add_parser("route", help="把 Claude Code 路由到 deepsee 代理(图片协议层转文字)")
+    s.add_argument("mode", choices=["on", "off"])
+    s.set_defaults(fn=_cmd_route)
 
     s = sub.add_parser("status", help="查看状态")
     s.set_defaults(fn=_cmd_status)
