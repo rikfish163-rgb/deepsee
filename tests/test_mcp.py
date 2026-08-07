@@ -87,7 +87,73 @@ def test_unknown_method_errors():
 def test_unknown_tool_returns_error():
     server = McpServer()
     out = _call(server, "tools/call", {"name": "nope", "arguments": {}})
-    assert out["result"]["isError"] is True
+    # MCP 规范:未知工具 → JSON-RPC -32602
+    assert out["error"]["code"] == -32602
+    assert "Unknown tool" in out["error"]["message"]
+
+
+def test_invalid_params_type():
+    """params 非对象 → -32602。"""
+    server = McpServer()
+    out = server.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": []})
+    assert out["error"]["code"] == -32602
+
+
+def test_missing_method_is_invalid_request():
+    """带 id 但缺 method → -32600 Invalid Request。"""
+    server = McpServer()
+    out = server.handle({"jsonrpc": "2.0", "id": 1})
+    assert out["error"]["code"] == -32600
+
+
+def test_initialize_negotiates_known_version():
+    """回显已知协议版本,未知版本回退到服务端版本。"""
+    server = McpServer()
+    out = _call(server, "initialize", {"protocolVersion": "2024-11-05", "capabilities": {}})
+    assert out["result"]["protocolVersion"] == "2024-11-05"
+    out2 = _call(server, "initialize", {"protocolVersion": "9999-99-99", "capabilities": {}})
+    assert out2["result"]["protocolVersion"] == mcp_server.PROTOCOL_VERSION
+
+
+def test_serve_stdio_parse_error(monkeypatch):
+    """坏 JSON 行 → -32700 Parse error,不崩溃。"""
+    import io
+
+    orig_stdin, orig_stdout = mcp_server.sys.stdin, mcp_server.sys.stdout
+    try:
+        mcp_server.sys.stdin = io.StringIO("this is not json\n")
+        buf = io.StringIO()
+        mcp_server.sys.stdout = buf
+        mcp_server.serve_stdio()
+        out = json.loads(buf.getvalue().strip())
+    finally:
+        mcp_server.sys.stdin, mcp_server.sys.stdout = orig_stdin, orig_stdout
+    assert out["error"]["code"] == -32700
+
+
+def test_tool_result_truncated(monkeypatch):
+    """超长工具结果被截断。"""
+    server = McpServer()
+    cfg = {"vision": {"chain": [{"provider": "mock"}]}, "upstream": {}, "generation": {}}
+    server.cfg = cfg
+    monkeypatch.setattr("deepsee.mcp_server.load", lambda: cfg)
+
+    class _FakeSeer:
+        def __init__(self, *a, **k):
+            pass
+
+        @classmethod
+        def from_config(cls, cfg):
+            return cls()
+
+        def describe(self, *a, **k):
+            return "x" * (mcp_server.MAX_RESULT_CHARS + 1000), "mock"
+
+    monkeypatch.setattr(mcp_server, "Seer", _FakeSeer)
+    out = _call(server, "tools/call", {"name": "describe_image", "arguments": {"source": "/x.png"}})
+    text = out["result"]["content"][0]["text"]
+    assert len(text) <= mcp_server.MAX_RESULT_CHARS + 30
+    assert "已截断" in text
 
 
 def test_serve_stdio_roundtrip(monkeypatch, capsys):

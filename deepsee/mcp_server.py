@@ -1,10 +1,10 @@
 """手写轻量 MCP Server(stdio JSON-RPC 2.0,零依赖)。
 
-协议:MCP stdio 走换行分隔的 JSON-RPC。实现 initialize / tools/list / tools/call / ping。
+协议:MCP stdio 走换行分隔的 JSON-RPC(与官方 SDK 一致)。
+实现:initialize / ping / tools/list / tools/call;未声明的 capability
+(resources/prompts/completions)返回空结果而非报错;通知类忽略。
 工具:describe_image(see) / ocr_image / generate_image / vision_status。
-若安装了官方 `mcp` 包,可选使用(见 deepsee[ mcp] extra),默认本实现足够。
-
-注意:该文件依赖零第三方库,仅标准库。
+仅标准库,零第三方依赖。
 """
 
 from __future__ import annotations
@@ -59,7 +59,13 @@ TOOLS: list[dict] = [
 ]
 
 SERVER_INFO = {"name": "deepsee", "version": __version__}
-PROTOCOL_VERSION = "2024-11-05"
+PROTOCOL_VERSION = "2025-06-18"
+_KNOWN_PROTOCOL_VERSIONS = {"2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"}
+CAPABILITIES = {"tools": {"listChanged": False}}
+# 单次工具结果上限(避免撑爆客户端 tool result 缓冲)
+MAX_RESULT_CHARS = 200_000
+# 工具名白名单(含 see 别名)
+_KNOWN_TOOLS = {"describe_image", "see", "ocr_image", "generate_image", "vision_status"}
 
 
 class McpServer:
@@ -70,25 +76,55 @@ class McpServer:
 
     # -- 请求处理 ---------------------------------------------------------
     def handle(self, msg: dict) -> dict | None:
-        self.cfg = load()  # mtime 缓存,便宜;反映外部配置改动
+        if not isinstance(msg, dict):
+            return None
         method = msg.get("method")
-        params = msg.get("params") or {}
+        if not isinstance(method, str) or not method:
+            return _error(msg.get("id"), -32600, "Invalid Request")
+        params = msg.get("params")
+        if params is not None and not isinstance(params, dict):
+            return _error(msg.get("id"), -32602, "params must be an object")
+        params = params or {}
         msg_id = msg.get("id")
 
+        self.cfg = load()  # mtime 缓存,便宜;反映外部配置改动
+
         if method == "initialize":
+            # 只回显已知协议版本,未知则回退到服务端实际实现的版本
+            pv = params.get("protocolVersion")
+            if pv not in _KNOWN_PROTOCOL_VERSIONS:
+                pv = PROTOCOL_VERSION
             return _response(msg_id, {
-                "protocolVersion": params.get("protocolVersion") or PROTOCOL_VERSION,
-                "capabilities": {"tools": {"listChanged": False}},
+                "protocolVersion": pv,
+                "capabilities": CAPABILITIES,
                 "serverInfo": SERVER_INFO,
+                "instructions": (
+                    "deepsee:让 DeepSeek 等纯文本模型'看图'。需要理解图片时调用 "
+                    "describe_image(路径/URL/留空=最近截图),提取文字用 ocr_image。"
+                ),
             })
-        if method == "notifications/initialized":
-            return None
         if method == "ping":
             return _response(msg_id, {})
         if method == "tools/list":
             return _response(msg_id, {"tools": TOOLS})
         if method == "tools/call":
             return self._tool_call(msg_id, params)
+        # 未声明的 capability,给空结果而非报错(部分客户端会探测)
+        if method == "resources/list":
+            return _response(msg_id, {"resources": []})
+        if method == "resources/templates/list":
+            return _response(msg_id, {"resourceTemplates": []})
+        if method == "prompts/list":
+            return _response(msg_id, {"prompts": []})
+        if method == "completions/complete":
+            return _response(msg_id, {"completion": {"values": [], "total": 0}})
+        if method == "resources/read":
+            return _error(msg_id, -32602, "no resources available")
+        if method == "prompts/get":
+            return _error(msg_id, -32602, "no prompts available")
+        # 通知类:忽略(不响应)
+        if method.startswith("notifications/"):
+            return None
         if msg_id is not None:
             return _error(msg_id, -32601, f"method not found: {method}")
         return None
@@ -96,8 +132,18 @@ class McpServer:
     def _tool_call(self, msg_id, params: dict) -> dict:
         name = params.get("name", "")
         args = params.get("arguments") or {}
+        if name not in _KNOWN_TOOLS:
+            # MCP 规范:未知工具返回 JSON-RPC -32602
+            return _error(msg_id, -32602, f"Unknown tool: {name}")
+        if not isinstance(args, dict):
+            return _response(msg_id, {
+                "content": [{"type": "text", "text": "错误: arguments 必须是对象"}],
+                "isError": True,
+            })
         try:
             text = self._run(name, args)
+            if len(text) > MAX_RESULT_CHARS:
+                text = text[:MAX_RESULT_CHARS] + "\n…(结果过长已截断)"
             return _response(msg_id, {"content": [{"type": "text", "text": text}], "isError": False})
         except Exception as e:  # noqa: BLE001
             return _response(msg_id, {
@@ -165,7 +211,22 @@ def _error(msg_id, code: int, message: str) -> dict:
     return {"jsonrpc": "2.0", "id": msg_id, "error": {"code": code, "message": message}}
 
 
+def _write_line(obj: dict) -> bool:
+    """写一行 JSON-RPC 响应;客户端断开时返回 False 干净退出。"""
+    try:
+        sys.stdout.write(json.dumps(obj, ensure_ascii=False) + "\n")
+        sys.stdout.flush()
+        return True
+    except (BrokenPipeError, OSError):
+        return False
+
+
 def serve_stdio() -> int:
+    try:
+        sys.stdin.reconfigure(encoding="utf-8")
+        sys.stdout.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        pass  # 某些环境不支持 reconfigure
     server = McpServer()
     for raw in sys.stdin:
         line = raw.strip()
@@ -174,8 +235,14 @@ def serve_stdio() -> int:
         try:
             msg = json.loads(line)
         except json.JSONDecodeError:
+            if not _write_line({"jsonrpc": "2.0", "id": None,
+                                "error": {"code": -32700, "message": "Parse error"}}):
+                return 0
             continue
         if not isinstance(msg, dict):
+            if not _write_line({"jsonrpc": "2.0", "id": None,
+                                "error": {"code": -32600, "message": "Invalid Request"}}):
+                return 0
             continue
         try:
             out = server.handle(msg)
@@ -185,8 +252,8 @@ def serve_stdio() -> int:
             else:
                 out = None
         if out is not None:
-            sys.stdout.write(json.dumps(out, ensure_ascii=False) + "\n")
-            sys.stdout.flush()
+            if not _write_line(out):
+                return 0
     return 0
 
 
