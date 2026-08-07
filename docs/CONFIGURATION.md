@@ -97,7 +97,30 @@ deepsee install          # 装 Claude Code Hook + MCP(带备份)
 #   · 或让模型调用 describe_image 工具
 ```
 
-回退:`deepsee uninstall`(从备份恢复)。
+**Hook 的边界(务必了解)**:
+- Hook 只在**交互式会话 + 模型主动 Read 图片路径**时生效。
+- **headless(`claude -p`)与"粘贴图"(消息里的 image 块)不走 Read**,Claude Code 对 updatedInput 可能不生效——这两种场景请用下面两条:
+- Hook 写在 `settings.local.json`(不是 settings.json),这样 **cc-switch 切供应商重写 settings.json 也不会把它抹掉**。
+
+### 主方案:把 Claude Code 路由到 deepsee 代理(覆盖所有图片场景)
+
+```bash
+deepsee route on     # 把 ANTHROPIC_BASE_URL 指到 deepsee 代理(写进 settings.local.json,覆盖 cc-switch)
+# 重启 Claude Code 生效。
+# 之后所有图片(粘贴/headless/Read)都在代理处由 Converter 转成文字,再转发你的上游。
+# 代理默认 8081 端口,需常驻(`deepsee start -d`)。回退:`deepsee route off`。
+```
+
+```
+Claude Code ──► deepsee 代理(8081,图片块→文字)──► 你的上游(DeepSeek/中继/cc-switch)──► 模型回答
+```
+
+> 代理作为中转,对话能力依赖代理常驻 + 上游 key/额度可用。切供应商不受影响(deepsee 代理只管转图,上游照旧)。
+> 依赖 cc-switch 的场合:cc-switch 会把 ANTHROPIC_BASE_URL 写进 settings.json,deepsee 用 settings.local.json 覆盖它且不被重写。
+
+### 兜底:MCP 工具
+- `describe_image` / `ocr_image` / `generate_image` 走 `deepsee mcp`,只依赖视觉 key(如智谱),**不依赖上游对话额度**——即使对话通道没额度,识图也照常可用。
+- 回退:`deepsee uninstall`(从备份恢复)。
 
 ## 6. 其他客户端
 

@@ -31,8 +31,9 @@ deepsee install            # 装进 Claude Code(Hook + MCP),重启即生效
 
 | 形态 | 命令/方式 | 适用 |
 |---|---|---|
-| **Claude Code Hook** | `deepsee install` | 贴图自动识图,最丝滑 |
-| **MCP 工具** | `deepsee install` → `describe_image`/`generate_image` | 模型主动调用 |
+| **Claude Code 路由代理(主)** | `deepsee route on` | 覆盖所有图片场景:粘贴/headless/Read,协议层转文字 |
+| **Claude Code Hook** | `deepsee install` | 交互式贴图/Read 自动识图(写在 settings.local.json,cc-switch 不抹) |
+| **MCP 工具** | `deepsee install` → `describe_image`/`generate_image` | 只靠视觉 key 即可,不依赖对话额度 |
 | **网页聊天界面** | `deepsee ui` / `deepsee web` | 浏览器里贴图即聊(流式) |
 | **双协议代理** | `deepsee start` | Cherry Studio / ChatBox / Cursor / OpenCode / Cline |
 | **Codex skill** | `deepsee install --skill` | Codex Desktop / CLI |
