@@ -28,81 +28,130 @@
       <span class="pnode"><span class="pnode-ic">▤</span>DeepSeek</span>
     </section>
 
-    <main class="grid">
-      <!-- 识图台 -->
-      <section class="panel panel-see">
-        <header class="panel-h">
-          <h2>识图台 <span class="en">See</span></h2>
-          <span class="mode-switch" role="group" aria-label="识图模式">
-            <button type="button" data-mode="describe" class="active">describe</button>
-            <button type="button" data-mode="ocr">ocr</button>
-            <button type="button" data-mode="qa">qa</button>
-          </span>
-        </header>
+    <nav class="tabs" id="tabs" aria-label="功能切换">
+      <button type="button" data-tab="chat" class="active">对话</button>
+      <button type="button" data-tab="see">识图台</button>
+      <button type="button" data-tab="gen">画图台</button>
+      <button type="button" data-tab="status">状态</button>
+      <button type="button" data-tab="config">配置</button>
+    </nav>
 
-        <div class="dropzone" id="dropzone">
-          <input id="fileInput" type="file" accept="image/*" hidden>
-          <p class="dz-hint">把图片拖进来,或 <strong>Ctrl+V</strong> 直接粘贴,或选择下面一种来源:</p>
-          <div class="dz-actions">
-            <button class="btn" id="pickBtn" type="button">选择图片</button>
-            <button class="btn btn-ghost" id="clipBtn" type="button">取最近截图</button>
-          </div>
-          <input class="field" id="urlInput" placeholder="或贴入本地图片路径 / http(s) 网址">
+    <!-- 对话 -->
+    <section class="panel tab-panel active" id="tab-chat">
+      <header class="panel-h">
+        <h2>对话 <span class="en">Chat</span></h2>
+        <button class="btn btn-ghost" id="clearChatBtn" type="button">清空对话</button>
+      </header>
+      <div class="chat-log" id="chatLog">
+        <div class="chat-empty" id="chatEmpty">直接粘贴截图或输入文字,和 DeepSeek 对话 — 图片会自动转成文字再交给它,和原生识图模型一样流畅。</div>
+      </div>
+      <div class="chat-compose">
+        <div class="attach-row" id="attachRow" hidden>
+          <img id="attachThumb" alt="待发送图片">
+          <span id="attachName"></span>
+          <button class="btn btn-ghost" id="attachRemove" type="button">移除</button>
         </div>
+        <textarea class="field" id="chatInput" rows="2"
+                  placeholder="问点什么… Ctrl+V 直接粘贴截图,Enter 发送,Shift+Enter 换行"></textarea>
+        <div class="chat-bar">
+          <input id="chatFile" type="file" accept="image/*" hidden>
+          <button class="btn" id="attachBtn" type="button">图片</button>
+          <button class="btn btn-primary btn-cool" id="sendBtn" type="button">发送</button>
+          <span class="meta" id="chatMeta"></span>
+        </div>
+      </div>
+    </section>
 
-        <div class="qa-row">
-          <input class="field" id="questionInput" placeholder="可选:针对图片提问(qa 模式生效)">
-        </div>
+    <!-- 识图台 -->
+    <section class="panel tab-panel" id="tab-see">
+      <header class="panel-h">
+        <h2>识图台 <span class="en">See</span></h2>
+        <span class="mode-switch" role="group" aria-label="识图模式">
+          <button type="button" data-mode="describe" class="active">describe</button>
+          <button type="button" data-mode="ocr">ocr</button>
+          <button type="button" data-mode="qa">qa</button>
+        </span>
+      </header>
 
-        <div class="see-actions">
-          <button class="btn btn-primary btn-cool" id="seeBtn" type="button">识别这张图</button>
-          <span class="meta" id="seeMeta"></span>
+      <div class="dropzone" id="dropzone">
+        <input id="fileInput" type="file" accept="image/*" hidden>
+        <p class="dz-hint">把图片拖进来,或 <strong>Ctrl+V</strong> 直接粘贴,或选择下面一种来源:</p>
+        <div class="dz-actions">
+          <button class="btn" id="pickBtn" type="button">选择图片</button>
+          <button class="btn btn-ghost" id="clipBtn" type="button">取最近截图</button>
         </div>
-        <div class="output" id="seeOutput" hidden></div>
-      </section>
+        <input class="field" id="urlInput" placeholder="或贴入本地图片路径 / http(s) 网址">
+      </div>
 
-      <!-- 画图台 -->
-      <section class="panel panel-gen">
-        <header class="panel-h">
-          <h2>画图台 <span class="en">Gen</span></h2>
-        </header>
-        <textarea class="field" id="genPrompt" rows="3"
-                  placeholder="描述你想生成的图…&#10;例如:一只在月球上打篮球的柴犬,赛博朋克风"></textarea>
-        <div class="gen-actions">
-          <button class="btn btn-primary btn-warm" id="genBtn" type="button">生成</button>
-          <span class="meta" id="genMeta"></span>
-        </div>
-        <div class="gen-result" id="genResult" hidden>
-          <img id="genImg" alt="生成结果">
-          <p class="path" id="genPath"></p>
-        </div>
-      </section>
+      <div class="qa-row">
+        <input class="field" id="questionInput" placeholder="可选:针对图片提问(qa 模式生效)">
+      </div>
 
-      <!-- 状态 -->
-      <section class="panel panel-status">
-        <header class="panel-h">
-          <h2>状态 <span class="en">Status</span></h2>
-        </header>
-        <dl class="kv" id="statusList"></dl>
-        <ul class="problems" id="problems"></ul>
-      </section>
+      <div class="see-actions">
+        <button class="btn btn-primary btn-cool" id="seeBtn" type="button">识别这张图</button>
+        <span class="meta" id="seeMeta"></span>
+      </div>
+      <div class="output" id="seeOutput" hidden></div>
+    </section>
 
-      <!-- 配置 -->
-      <section class="panel panel-config">
-        <header class="panel-h">
-          <h2>配置 <span class="en">Config</span></h2>
-          <button class="btn btn-ghost" id="editCfgBtn" type="button">编辑</button>
-        </header>
-        <pre class="code" id="cfgView"></pre>
-        <div id="cfgEdit" hidden>
-          <textarea class="field code-area" id="cfgText" rows="10" spellcheck="false"></textarea>
-          <div class="config-actions">
-            <button class="btn btn-primary btn-cool" id="saveCfgBtn" type="button">保存配置</button>
-            <span class="meta" id="cfgMeta"></span>
-          </div>
+    <!-- 画图台 -->
+    <section class="panel tab-panel" id="tab-gen">
+      <header class="panel-h">
+        <h2>画图台 <span class="en">Gen</span></h2>
+      </header>
+      <textarea class="field" id="genPrompt" rows="3"
+                placeholder="描述你想生成的图…&#10;例如:一只在月球上打篮球的柴犬,赛博朋克风"></textarea>
+      <div class="gen-actions">
+        <button class="btn btn-primary btn-warm" id="genBtn" type="button">生成</button>
+        <span class="meta" id="genMeta"></span>
+      </div>
+      <div class="gen-result" id="genResult" hidden>
+        <img id="genImg" alt="生成结果">
+        <p class="path" id="genPath"></p>
+      </div>
+    </section>
+
+    <!-- 状态 -->
+    <section class="panel tab-panel" id="tab-status">
+      <header class="panel-h">
+        <h2>状态 <span class="en">Status</span></h2>
+      </header>
+      <dl class="kv" id="statusList"></dl>
+      <ul class="problems" id="problems"></ul>
+
+      <div class="integration">
+        <h3>接入其他聊天客户端</h3>
+        <p>把任意 OpenAI 兼容客户端(Cherry Studio / ChatBox / NextChat / Cline)指到本地代理,即可用 DeepSeek 并自动获得看图能力。先 <code>deepsee start</code> 启动代理。</p>
+        <div class="copy-row">
+          <input class="field" id="intBaseUrl" readonly value="http://127.0.0.1:8080/v1">
+          <button class="btn btn-mini" data-copy="intBaseUrl" type="button">复制</button>
         </div>
-      </section>
-    </main>
+        <div class="copy-row">
+          <input class="field" id="intKey" readonly value="">
+          <button class="btn btn-mini" data-copy="intKey" type="button">复制</button>
+        </div>
+        <div class="copy-row">
+          <input class="field" id="intModel" readonly value="deepseek-v4-flash">
+          <button class="btn btn-mini" data-copy="intModel" type="button">复制</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 配置 -->
+    <section class="panel tab-panel" id="tab-config">
+      <header class="panel-h">
+        <h2>配置 <span class="en">Config</span></h2>
+        <button class="btn btn-ghost" id="editCfgBtn" type="button">编辑</button>
+      </header>
+      <pre class="code" id="cfgView"></pre>
+      <div id="cfgEdit" hidden>
+        <textarea class="field code-area" id="cfgText" rows="10" spellcheck="false"></textarea>
+        <div class="config-actions">
+          <button class="btn btn-primary btn-cool" id="saveCfgBtn" type="button">保存配置</button>
+          <span class="meta" id="cfgMeta"></span>
+        </div>
+      </div>
+    </section>
   </div>
   <script src="/static/app.js"></script>
 </body>

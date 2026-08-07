@@ -291,6 +291,52 @@ def _cmd_uninstall(args) -> int:
     return 0
 
 
+def _cmd_client_cfg(args) -> int:
+    cfg = load()
+    up = cfg.get("upstream", {})
+    port = cfg["proxy"].get("port", 8080)
+    master = cfg["proxy"].get("master_key", "")
+    base = f"http://127.0.0.1:{port}/v1"
+    model = up.get("model", "deepseek-v4-flash")
+    key = master or "(留空,无需鉴权)"
+
+    cprint(f"\n  deepsee 代理接入配置(先运行 `deepsee start`)", "magenta", bold=True)
+    cprint(f"    base_url : {base}", "cyan")
+    cprint(f"    api_key  : {key}", "cyan")
+    cprint(f"    model    : {model}", "cyan")
+
+    cprint("\n  Cherry Studio / ChatBox / NextChat / Cline 通用设置:", "cyan")
+    cprint(f"    API 地址 = {base}", "cyan")
+    cprint(f"    API 密钥 = {key}", "cyan")
+    cprint(f"    模型     = {model}", "cyan")
+
+    cprint("\n  Claude Code(Anthropic 协议)指向代理:", "cyan")
+    cprint(f"    设置 ANTHROPIC_BASE_URL=http://127.0.0.1:{port} 即可(或用 `deepsee setup` 装 Hook,贴图更顺滑)", "cyan")
+    return 0
+
+
+def _cmd_ui(args) -> int:
+    """一键:起代理 + 起面板 + 打开浏览器。"""
+    cfg = load()
+    proxy_port = cfg["proxy"].get("port", 8080)
+    web_port = cfg["web"].get("port", 8090)
+    _daemonize("proxy", [sys.executable, "-m", "deepsee", "start", "--port", str(proxy_port)])
+    _daemonize("web", [sys.executable, "-m", "deepsee", "web", "--port", str(web_port)])
+    _open_browser(f"http://127.0.0.1:{web_port}")
+    cprint(f"\n  面板已打开 → http://127.0.0.1:{web_port}", "green", bold=True)
+    cprint(f"  代理 → http://127.0.0.1:{proxy_port}/v1  (停止: `deepsee stop proxy`)", "cyan")
+    return 0
+
+
+def _open_browser(url: str) -> None:
+    import webbrowser
+
+    try:
+        webbrowser.open(url)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 # ---------------------------------------------------------------------------
 # 主入口
 # ---------------------------------------------------------------------------
@@ -341,6 +387,12 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("-d", "--daemon", action="store_true")
     s.set_defaults(fn=_cmd_web)
+
+    s = sub.add_parser("ui", help="一键启动代理 + 面板并打开浏览器")
+    s.set_defaults(fn=_cmd_ui)
+
+    s = sub.add_parser("client-cfg", help="打印接入其他聊天客户端的配置")
+    s.set_defaults(fn=_cmd_client_cfg)
 
     s = sub.add_parser("status", help="查看状态")
     s.set_defaults(fn=_cmd_status)

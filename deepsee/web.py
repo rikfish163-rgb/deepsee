@@ -116,6 +116,8 @@ class WebHandler(BaseHTTPRequestHandler):
             return self._api_test(body)
         if path == "/api/gen":
             return self._api_gen(body)
+        if path == "/api/chat":
+            return self._api_chat(body)
         if path == "/api/latest":
             p = latest_session_image()
             if not p:
@@ -176,6 +178,57 @@ class WebHandler(BaseHTTPRequestHandler):
             return self._json(500, {"error": str(e)})
         return self._json(200, {"path": str(path), "url": f"/static_out?p={path.name}"})
 
+    def _api_chat(self, body: dict):
+        """对话:图片自动转文字后转发 DeepSeek。stream=true 走 SSE 流式。"""
+        from .chat import ChatError, chat_openai, iter_chat
+
+        cfg = load()
+        if not cfg.get("vision", {}).get("chain"):
+            return self._json(400, {"error": "未配置视觉 API,请先到配置页填写"})
+        if not cfg.get("upstream", {}).get("api_key"):
+            return self._json(400, {"error": "未配置上游 DeepSeek api_key(对话需要)"})
+        messages = body.get("messages", [])
+        payload = {
+            "model": cfg["upstream"].get("model", ""),
+            "messages": messages,
+            "max_tokens": 4096,
+        }
+        if not body.get("stream"):
+            try:
+                text = chat_openai(cfg, payload)
+            except ChatError as e:
+                return self._json(502, {"error": str(e)})
+            return self._json(200, {"text": text})
+
+        # SSE 流式
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "close")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.close_connection = True
+        try:
+            for delta in iter_chat(cfg, payload):
+                self._sse({"delta": delta})
+            self._sse({"done": True})
+        except ChatError as e:
+            self._sse({"error": str(e)})
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        except Exception as e:  # noqa: BLE001
+            self._sse({"error": f"internal: {e}"})
+        finally:
+            try:
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
+    def _sse(self, obj: dict) -> None:
+        data = json.dumps(obj, ensure_ascii=False)
+        self.wfile.write(f"data: {data}\n\n".encode("utf-8"))
+        self.wfile.flush()
+
 
 def _masked_config() -> dict:
     cfg = deepcopy(load())
@@ -227,6 +280,11 @@ def _status_payload() -> dict:
         "agents": detect_agents(),
         "problems": validate(cfg),
         "ports": {"proxy": cfg["proxy"].get("port"), "web": cfg["web"].get("port")},
+        "integration": {
+            "base_url": f"http://127.0.0.1:{cfg['proxy'].get('port', 8080)}/v1",
+            "model": cfg["upstream"].get("model", ""),
+            "master_key": cfg["proxy"].get("master_key", ""),
+        },
     }
 
 

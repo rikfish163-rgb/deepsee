@@ -119,3 +119,57 @@ def test_gen_not_configured(web_env):
     data = json.loads(body)
     assert status == 400
     assert "未配置" in data["error"]
+
+
+def _point_upstream(web_env, mock_upstream):
+    """把 web_env 的 upstream 指向 mock 上游,避免真实网络。"""
+    from deepsee.config import save
+
+    cfg = web_env["cfg"]
+    cfg["upstream"]["base_url"] = f"http://127.0.0.1:{mock_upstream['port']}/v1"
+    cfg["upstream"]["api_key"] = "uk"
+    save(cfg)
+
+
+def test_chat_nonstream(web_env, mock_upstream):
+    _point_upstream(web_env, mock_upstream)
+    status, body = _req(web_env["port"], "POST", "/api/chat", {
+        "messages": [{"role": "user", "content": [
+            {"type": "text", "text": "hi"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+        ]}],
+        "stream": False,
+    })
+    data = json.loads(body)
+    assert status == 200
+    assert data["text"] == "上游回复"
+
+
+def test_chat_stream(web_env, mock_upstream):
+    _point_upstream(web_env, mock_upstream)
+    status, body = _req(web_env["port"], "POST", "/api/chat", {
+        "messages": [{"role": "user", "content": "hi"}],
+        "stream": True,
+    })
+    assert status == 200
+    text = body.decode("utf-8")
+    assert "你好" in text
+    assert '"done": true' in text
+
+
+def test_chat_requires_vision(web_env):
+    from deepsee.config import save
+
+    cfg = web_env["cfg"]
+    cfg["vision"]["chain"] = []
+    save(cfg)
+    status, body = _req(web_env["port"], "POST", "/api/chat",
+                        {"messages": [], "stream": False})
+    assert status == 400
+
+
+def test_status_includes_integration(web_env):
+    status, body = _req(web_env["port"], "GET", "/api/status")
+    data = json.loads(body)
+    assert data["integration"]["model"] == "deepseek-v4-flash"
+    assert "/v1" in data["integration"]["base_url"]

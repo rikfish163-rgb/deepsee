@@ -10,19 +10,22 @@ OpenAI 兼容视觉 API(默认免费的 GLM-4V-Flash)把图片转成文字喂给
 
 ```bash
 pip install . && deepsee setup        # 向导:填一次视觉 API key,自动配好各终端
+deepsee ui                            # 一键:起代理 + 打开网页聊天界面
 deepsee see ./截图.png                # 命令行看图
 deepsee gen "一只在月球上打篮球的柴犬"   # 命令行画图
-deepsee web                           # 打开美观的 Web 面板(测试/配置/状态)
+deepsee web                           # 打开 Web 面板(对话/识图/画图/状态/配置)
+deepsee client-cfg                    # 打印接入 Cherry Studio 等客户端的配置
 ```
 
 ## 它解决了什么
 
 | 痛点 | 现状 |
 |---|---|
-| 在 Claude Code 里贴图,DeepSeek 看不懂 | `PreToolUse` Hook 自动把图换成文字描述,模型以为自己看了图 |
+| 在 Claude Code 里贴图,DeepSeek 报 unsupported | `PreToolUse` Hook 自动把图换成文字描述,模型以为自己看了图,丝滑无报错 |
+| 想在网页里直接贴图跟 DeepSeek 聊 | Web 面板「对话」标签页:粘贴/上传图片 → 自动转文字 → 流式回复 |
 | Codex / Cursor / OpenCode 里发图直接报错崩溃 | 本地代理 `base_url` 一改,image 块自动转文字 |
-| 想给 DeepSeek 加图片能力但不会写 MCP | 内置手写轻量 MCP server(`describe_image` / `generate_image`) |
-| 图想存/想画但没接口 | `deepsee gen` + Web 面板一键文生图 |
+| 想给 DeepSeek 加图片能力但不会写 MCP | 内置轻量 MCP server(`describe_image` / `generate_image`),一键注册 |
+| 想在 Cherry Studio / ChatBox 里用 DeepSeek 看图 | 面板「状态」页一键复制接入配置,或 `deepsee client-cfg` |
 
 ## 兼容矩阵
 

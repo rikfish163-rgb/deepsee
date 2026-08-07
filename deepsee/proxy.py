@@ -13,8 +13,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 from .caption import Seer
+from .chat import Converter, build_openai_payload
 from .util import HttpError, cprint, http_json, http_stream, safe_join
-from .vision import VisionError
 
 
 class ProxyError(Exception):
@@ -22,64 +22,6 @@ class ProxyError(Exception):
         self.status = status
         self.msg = msg
         super().__init__(msg)
-
-
-# ---------------------------------------------------------------------------
-# 图片 → 文字 替换
-# ---------------------------------------------------------------------------
-
-
-class Converter:
-    """把 OpenAI / Anthropic 请求里的图片块替换为文字描述。"""
-
-    def __init__(self, seer: Seer):
-        self.seer = seer
-
-    def _describe(self, ref: str, idx: int) -> str:
-        try:
-            text, _ = self.seer.describe(ref)
-        except VisionError as e:
-            # 视觉挂了也要让对话继续:给个占位描述
-            return f"[Image {idx} 无法识别: {str(e)[:80]}]"
-        return f"[Image {idx}] {text}"
-
-    def openai_messages(self, messages: list) -> tuple[list, int]:
-        """返回 (新 messages, 转换图片数)。"""
-        out: list = []
-        n = 0
-        for m in messages:
-            content = m.get("content")
-            if isinstance(content, list):
-                new_content: list[dict] = []
-                for item in content:
-                    if isinstance(item, dict) and item.get("type") == "image_url":
-                        n += 1
-                        ref = item.get("image_url", {}).get("url", "")
-                        new_content.append({"type": "text", "text": self._describe(ref, n)})
-                    else:
-                        new_content.append(item)
-                m = {**m, "content": new_content}
-            out.append(m)
-        return out, n
-
-    def anthropic_content(self, content: list) -> tuple[list, int]:
-        """返回 (新 content 块, 转换图片数)。"""
-        out: list[dict] = []
-        n = 0
-        for blk in content:
-            if isinstance(blk, dict) and blk.get("type") == "image":
-                n += 1
-                src = blk.get("source", {})
-                media = src.get("media_type", "image/png")
-                data = src.get("data", "")
-                if not data:
-                    out.append({"type": "text", "text": f"[Image {n} 空] "})
-                    continue
-                ref = f"data:{media};base64,{data}"
-                out.append({"type": "text", "text": self._describe(ref, n)})
-            else:
-                out.append(blk)
-        return out, n
 
 
 # ---------------------------------------------------------------------------
@@ -92,7 +34,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     cfg: dict = {}
-    seer: Seer | None = None
+    seer: Converter | None = None
 
     # -- 基础 -----------------------------------------------------------
     def log_message(self, fmt, *args):  # 精简日志
@@ -172,10 +114,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
         up = self.cfg.get("upstream", {})
         if up.get("format", "openai") == "anthropic":
             return self._openai_to_anthropic(payload)
-        messages = payload.get("messages", [])
-        converter = self._seer()
-        new_messages, n = converter.openai_messages(messages)
-        payload["messages"] = new_messages
+        payload = build_openai_payload(self.cfg, payload)  # 图片 → 文字
         url = safe_join(up.get("base_url", "https://api.deepseek.com/v1"), "chat/completions")
         headers = {"Authorization": f"Bearer {up.get('api_key', '')}"}
         if payload.get("stream"):

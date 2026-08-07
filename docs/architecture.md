@@ -25,10 +25,11 @@
 
 | 模块 | 职责 |
 |---|---|
-| `config.py` | `~/.deepsee/config.json` 读写、供应商预设、深层合并、校验 |
-| `util.py` | 图片判定/base64/缩放、跨平台剪贴板截图、会话日志捞图、HTTP+SSE、ANSI 输出 |
+| `config.py` | `~/.deepsee/config.json` 读写、供应商预设、深层合并、mtime 缓存校验 |
+| `util.py` | 图片判定/base64/缩放、跨平台剪贴板截图、会话日志增量捞图、HTTP+SSE、`mask_secrets`、ANSI 输出 |
 | `vision.py` | `VisionClient`(OpenAI 兼容 chat)+ `VisionChain`(降级链) |
-| `caption.py` | 三种识图模式(describe/ocr/qa)的 prompt 与调用 |
+| `caption.py` | 三种识图模式(describe/ocr/qa)的 prompt 与调用、`Seer.from_config` |
+| `chat.py` | 对话服务:`Converter`(图片→文字)、`chat_openai`/`iter_chat`(流式)。**代理与 Web 面板共用同一入口** |
 | `generate.py` | OpenAI 兼容 `/images/generations` 客户端 + 后端预设 |
 | `proxy.py` | `ThreadingHTTPServer`;`/v1/chat/completions`、`/v1/messages`、`/v1/models`、`/v1/images/generations`、`/health` |
 | `hook_claude.py` | Claude Code PreToolUse(Read)拦截:图片 → 临时 txt → 改写 file_path |
