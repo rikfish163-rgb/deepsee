@@ -527,7 +527,10 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("ocr", help="提取图片文字")
     s.add_argument("source", nargs="?", default="")
     s.add_argument("--latest", action="store_true")
-    s.set_defaults(fn=_cmd_see, mode="ocr")
+    s.add_argument("-o", "--output")
+    s.add_argument("-v", "--verbose", action="store_true")
+    # 复用 _cmd_see,补齐它访问的属性,避免 Namespace 缺属性崩溃
+    s.set_defaults(fn=_cmd_see, mode="ocr", question="")
 
     s = sub.add_parser("gen", help="文生图")
     s.add_argument("prompt")
