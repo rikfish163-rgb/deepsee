@@ -57,8 +57,17 @@ def test_index_served(web_env):
     status, body = _req(web_env["port"], "GET", "/")
     assert status == 200
     assert b"deepsee" in body
+    assert b'href="./style.css"' in body
+    assert b'src="./app.js"' in body
     status, body = _req(web_env["port"], "GET", "/static/style.css")
     assert status == 200 and b"--cool" in body
+    status, body = _req(web_env["port"], "GET", "/style.css")
+    assert status == 200 and b"deepsee" in body
+    status, body = _req(web_env["port"], "GET", "/app.js")
+    assert status == 200 and b"loadStatus" in body
+    assert b"esc(c.provider)" in body and b"esc(c.model)" in body
+    status, body = _req(web_env["port"], "GET", "/favicon.ico")
+    assert status == 204 and body == b""
 
 
 def test_status_api(web_env):

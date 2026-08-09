@@ -139,8 +139,10 @@ class WebHandler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         if path in ("/", "/index.html"):
             return self._send(200, _static("index.html")[0], MIME[".html"])
-        if path.startswith("/static/"):
-            rel = path[len("/static/"):]
+        if path == "/favicon.ico":
+            return self._send(204, b"", MIME[".ico"])
+        if path.startswith("/static/") or path in ("/style.css", "/app.js"):
+            rel = path[len("/static/"):] if path.startswith("/static/") else path[1:]
             # 静态文件只在顶层 basename,拒绝含路径分隔符(防目录穿越)
             if not rel or "/" in rel or "\\" in rel:
                 return self._json(404, {"error": "not found"})
