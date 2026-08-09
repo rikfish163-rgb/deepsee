@@ -13,6 +13,14 @@ const state = {
   attach: null,          // {dataUrl, name}
 };
 
+const TAB_META = {
+  chat: ["对话工作台", "把图片和问题一起交给 DeepSeek，视觉中继会自动补全它看不到的部分。"],
+  see: ["视觉分析台", "选择识别方式和关注问题，把图片转换成可验证、可继续推理的文字。"],
+  gen: ["图片生成台", "使用你自己的图片生成端点，把描述转换成可下载的视觉结果。"],
+  status: ["链路状态", "检查视觉模型、上游推理、客户端接入与本地服务是否已经就绪。"],
+  config: ["本地配置", "查看经过遮盖的配置；所有修改都只保存在这台设备上。"],
+};
+
 // ---------- 工具 ----------
 async function api(url, opts = {}) {
   const res = await fetch(url, {
@@ -39,6 +47,9 @@ function switchTab(name) {
     b.classList.toggle("active", b.dataset.tab === name));
   document.querySelectorAll(".tab-panel").forEach((p) =>
     p.classList.toggle("active", p.id === `tab-${name}`));
+  const meta = TAB_META[name] || TAB_META.chat;
+  $("viewTitle").textContent = meta[0];
+  $("viewSubtitle").textContent = meta[1];
 }
 
 // ---------- 状态 ----------
@@ -65,7 +76,7 @@ async function loadStatus() {
 
     const rows = [];
     rows.push(["视觉链", s.vision.chain.length
-      ? s.vision.chain.map((c) => `${c.provider} · ${c.model}`).join("<br>")
+      ? s.vision.chain.map((c) => `${esc(c.provider)} · ${esc(c.model)}`).join("<br>")
       : "<span class='dot dot-bad'></span>未配置"]);
     rows.push(["上游模型", `${esc(s.upstream.model)} ${s.upstream.key_set ? "" : "· 无 key"}`]);
     rows.push(["文生图", s.generation.model
@@ -79,7 +90,7 @@ async function loadStatus() {
         : "<span class='dot dot-warn'></span>未探测"]);
     }
     $("statusList").innerHTML = rows
-      .map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`)
+      .map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`)
       .join("");
 
     const list = $("problems");
@@ -114,7 +125,15 @@ function renderChat() {
     const empty = document.createElement("div");
     empty.className = "chat-empty";
     empty.id = "chatEmpty";
-    empty.textContent = "直接粘贴截图或输入文字,和 DeepSeek 对话 — 图片会自动转成文字再交给它,和原生识图模型一样流畅。";
+    empty.innerHTML = `
+      <div class="empty-aperture" aria-hidden="true"><i></i><b></b></div>
+      <h3>把图发给 DeepSeek</h3>
+      <p>粘贴截图、选择图片，或者直接提问。deepsee 会先提取视觉事实，再交给文本模型推理。</p>
+      <div class="prompt-list" aria-label="示例问题">
+        <button type="button" data-prompt="帮我定位这张报错截图里的根本原因">分析报错截图</button>
+        <button type="button" data-prompt="请准确提取图片里的全部文字">提取图片文字</button>
+        <button type="button" data-prompt="解释这张技术图中的节点和数据流">读懂技术图</button>
+      </div>`;
     log.appendChild(empty);
     return;
   }
@@ -357,6 +376,7 @@ async function runGen() {
   try {
     const r = await api("/api/gen", { method: "POST", body: JSON.stringify({ prompt }) });
     $("genResult").hidden = false;
+    $("genPlaceholder").hidden = true;
     $("genImg").src = r.url;
     $("genPath").textContent = r.path;
     meta.textContent = "完成";
@@ -376,7 +396,7 @@ function toggleConfigEditor() {
     $("cfgText").value = JSON.stringify(state.cfg, null, 2);
     $("editCfgBtn").textContent = "收起";
   } else {
-    $("editCfgBtn").textContent = "编辑";
+    $("editCfgBtn").textContent = "编辑 JSON";
   }
 }
 
@@ -416,6 +436,13 @@ function handlePasteFile(file) {
 // ---------- 事件绑定 ----------
 document.querySelectorAll(".tabs button").forEach((b) =>
   b.addEventListener("click", () => switchTab(b.dataset.tab)));
+
+document.addEventListener("click", (e) => {
+  const chip = e.target.closest("[data-prompt]");
+  if (!chip) return;
+  $("chatInput").value = chip.dataset.prompt || "";
+  $("chatInput").focus();
+});
 
 // 对话
 $("sendBtn").addEventListener("click", sendChat);
@@ -484,5 +511,11 @@ document.querySelectorAll("[data-copy]").forEach((btn) =>
     }).catch(() => {});
   }));
 
-loadStatus();
-setInterval(loadStatus, 15000);
+if (location.protocol === "file:") {
+  $("fileNotice").hidden = false;
+  $("chainChip").dataset.state = "warn";
+  $("chainChipText").textContent = "静态预览";
+} else {
+  loadStatus();
+  setInterval(loadStatus, 15000);
+}
