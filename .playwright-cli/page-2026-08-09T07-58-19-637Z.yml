@@ -1,0 +1,57 @@
+- generic [ref=f3e2]:
+  - complementary [ref=f3e3]:
+    - generic "deepsee" [ref=f3e4]
+    - navigation "工作模式" [ref=f3e7]:
+      - button "对话" [ref=f3e8] [cursor=pointer]
+      - button "识图" [active] [ref=f3e11] [cursor=pointer]
+      - button "画图" [ref=f3e15] [cursor=pointer]
+      - button "状态" [ref=f3e20] [cursor=pointer]
+      - button "配置" [ref=f3e23] [cursor=pointer]
+  - main [ref=f3e27]:
+    - generic [ref=f3e28]:
+      - generic [ref=f3e29]:
+        - paragraph [ref=f3e30]: LOCAL VISION WORKSPACE
+        - heading "视觉分析台" [level=1] [ref=f3e73]
+        - paragraph [ref=f3e32]: 选择识别方式和关注问题，把图片转换成可验证、可继续推理的文字。
+      - region "图片转文字再交给 DeepSeek" [ref=f3e33]:
+        - generic [ref=f3e34]:
+          - generic [ref=f3e35]: "01"
+          - generic [ref=f3e36]: 图片
+        - generic [ref=f3e39]:
+          - generic [ref=f3e40]: "02"
+          - generic [ref=f3e41]: zhipu · glm-4v-flash
+        - generic [ref=f3e44]:
+          - generic [ref=f3e45]: "03"
+          - generic [ref=f3e46]: DeepSeek
+    - generic [ref=f3e74]:
+      - generic [ref=f3e75]:
+        - generic [ref=f3e76]:
+          - text: Vision lab
+          - heading "识图台" [level=2] [ref=f3e77]
+        - group "识图模式" [ref=f3e78]:
+          - button "描述" [ref=f3e79] [cursor=pointer]
+          - button "OCR" [ref=f3e80] [cursor=pointer]
+          - button "问图" [ref=f3e81] [cursor=pointer]
+      - generic [ref=f3e82]:
+        - generic [ref=f3e83]:
+          - generic [ref=f3e84]:
+            - generic [ref=f3e85]: +
+            - heading "放入一张图片" [level=3] [ref=f3e87]
+            - paragraph [ref=f3e88]:
+              - text: 拖拽到这里，或按
+              - strong [ref=f3e89]: Ctrl+V
+              - text: 粘贴截图
+            - generic [ref=f3e90]:
+              - button "选择图片" [ref=f3e91] [cursor=pointer]
+              - button "最近截图" [ref=f3e92] [cursor=pointer]
+          - generic [ref=f3e93]: 图片路径或网址
+          - textbox "图片路径或网址" [ref=f3e94]:
+            - /placeholder: /path/to/image.png 或 https://…
+        - generic [ref=f3e95]:
+          - text: Focus
+          - heading "你想从图里知道什么？" [level=3] [ref=f3e96]
+          - paragraph [ref=f3e97]: 不填写时会完整描述；填写后视觉模型会优先寻找与问题相关的证据。
+          - textbox "例如：这段报错的错误码和关键堆栈是什么？" [ref=f3e98]
+          - button "开始识别" [ref=f3e100] [cursor=pointer]:
+            - text: 开始识别
+            - generic [ref=f3e101]: →
