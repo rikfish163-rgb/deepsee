@@ -73,10 +73,24 @@ class ProxyHandler(BaseHTTPRequestHandler):
         if length < 0:
             raise ProxyError(400, "invalid Content-Length")
         if length > max_bytes:
-            # 请求体尚未读取,响应后关闭连接以免残留字节被解析成下一次请求。
+            self._oversized_drain_limit = max_bytes + 64 * 1024
             self.close_connection = True
             raise ProxyError(413, f"request body too large (limit {max_mb} MB)")
         return self.rfile.read(length) if length else b""
+
+    def _drain_oversized_body(self) -> None:
+        """413 已发送后短暂排空请求体，让仍在上传的客户端读到响应。"""
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            remaining = min(length, getattr(self, "_oversized_drain_limit", 64 * 1024))
+            self.connection.settimeout(1.0)
+            while remaining > 0:
+                chunk = self.rfile.read(min(64 * 1024, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+        except (OSError, ValueError):
+            pass
 
     def _check_auth(self) -> None:
         master = (self.cfg.get("proxy") or {}).get("master_key", "")
@@ -142,6 +156,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
         except (ProxyError, ValueError) as e:
             status = e.status if isinstance(e, ProxyError) else 400
             self._send_json(status, {"error": {"message": str(e)}})
+            if status == 413:
+                self._drain_oversized_body()
         except Exception as e:  # noqa: BLE001 兜底,不崩进程
             self._send_json(500, {"error": {"message": f"internal: {e}"}})
 

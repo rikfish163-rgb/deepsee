@@ -96,9 +96,25 @@ class WebHandler(BaseHTTPRequestHandler):
         if length < 0:
             raise ValueError("invalid Content-Length")
         if length > max_bytes:
+            self._oversized_drain_limit = max_bytes + 64 * 1024
             self.close_connection = True
             raise _BodyTooLarge(f"request body too large (limit {max_mb} MB)")
         return self.rfile.read(length) if length else b""
+
+    def _reject_oversized_body(self, error: Exception) -> None:
+        """先发 413，再短暂排空上传数据，避免客户端只看到连接重置。"""
+        self._json(413, {"error": str(error)})
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            remaining = min(length, getattr(self, "_oversized_drain_limit", 64 * 1024))
+            self.connection.settimeout(1.0)
+            while remaining > 0:
+                chunk = self.rfile.read(min(64 * 1024, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+        except (OSError, ValueError):
+            pass
 
     def _check_origin(self) -> bool:
         """CSRF 防护:拒绝带非本机 Origin 的写请求。无 Origin(CLI/同源)放行。"""
@@ -167,7 +183,7 @@ class WebHandler(BaseHTTPRequestHandler):
         try:
             raw = self._read_body()
         except _BodyTooLarge as e:
-            return self._json(413, {"error": str(e)})
+            return self._reject_oversized_body(e)
         except ValueError as e:
             return self._json(400, {"error": str(e)})
         try:
@@ -197,7 +213,7 @@ class WebHandler(BaseHTTPRequestHandler):
         try:
             raw = self._read_body()
         except _BodyTooLarge as e:
-            return self._json(413, {"error": str(e)})
+            return self._reject_oversized_body(e)
         except ValueError as e:
             return self._json(400, {"error": str(e)})
         if path != "/api/config":
