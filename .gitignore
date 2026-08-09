@@ -7,6 +7,7 @@ build/
 dist/
 .venv/
 .pytest_cache/
+.playwright-cli/
 
 # deepsee 运行时
 .deepsee/
