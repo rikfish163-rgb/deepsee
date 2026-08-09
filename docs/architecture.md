@@ -33,7 +33,7 @@
 | `generate.py` | OpenAI 兼容 `/images/generations` 客户端 + 后端预设 |
 | `proxy.py` | `ThreadingHTTPServer`;`/v1/chat/completions`、`/v1/messages`、`/v1/models`、`/v1/images/generations`、`/health` |
 | `hook_claude.py` | Claude Code PreToolUse(Read)拦截:图片 → 临时 txt → 改写 file_path |
-| `mcp_server.py` | 手写 stdio JSON-RPC MCP:`describe_image/ocr_image/generate_image/vision_status` |
+| `mcp_server.py` | 手写 stdio JSON-RPC MCP:`analyze_image/compare_images/ocr_image/vision_status`(保留 describe/generate 兼容) |
 | `cli.py` | argparse 子命令入口 |
 | `installer.py` | `setup` 向导:探测终端、写配置、备份回滚、注册 Hook/Skill/patch、联网自检 |
 | `web.py` + `web/static/` | stdlib http.server + 单页前端(状态/识图台/画图台/配置) |
@@ -83,7 +83,7 @@ image_url / image 块或图片路径
     "base_url": "https://api.deepseek.com/v1",
     "api_key": "...", "model": "deepseek-v4-flash", "format": "openai"
   },
-  "proxy": { "port": 8080, "master_key": "" },
+  "proxy": { "port": 8081, "master_key": "", "max_body_mb": 25 },
   "generation": { "provider": "siliconflow", "api_key": "...",
                   "model": "black-forest-labs/FLUX.1-schnell-free" },
   "web": { "port": 8090 },

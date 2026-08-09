@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from typing import Any
 
 from .util import HttpError, TINY_PNG_DATA_URI, cprint, http_json, safe_join
@@ -38,8 +39,12 @@ class VisionClient:
         self, image_ref: str, prompt: str, image_ref2: str | None = None
     ) -> list[dict]:
         """image_ref: data URI / http(s) URL。返回 OpenAI content 数组消息。"""
-        content: list[dict] = []
         refs = [image_ref] + ([image_ref2] if image_ref2 else [])
+        return self.build_messages_many(refs, prompt)
+
+    def build_messages_many(self, refs: list[str], prompt: str) -> list[dict]:
+        """构造任意张图片的 OpenAI 兼容视觉消息。"""
+        content: list[dict] = []
         for ref in refs:
             if ref.startswith("data:"):
                 content.append({"type": "image_url", "image_url": {"url": ref}})
@@ -88,7 +93,13 @@ def _err_text(status: int, data: Any) -> str:
 class VisionChain:
     """多供应商降级链:按顺序尝试,失败自动切下一个。"""
 
-    def __init__(self, items: list[dict], timeout: int = 60, max_tokens: int = 2048):
+    def __init__(
+        self,
+        items: list[dict],
+        timeout: int = 60,
+        max_tokens: int = 2048,
+        failure_cooldown: int = 30,
+    ):
         self.clients: list[VisionClient] = []
         for it in items:
             self.clients.append(
@@ -102,6 +113,9 @@ class VisionChain:
                     extra_headers=it.get("headers") or None,
                 )
             )
+        self.failure_cooldown = max(0, int(failure_cooldown or 0))
+        self._failed_until: dict[int, float] = {}
+        self._failure_lock = threading.Lock()
 
     def caption(
         self,
@@ -110,16 +124,37 @@ class VisionChain:
         image_ref2: str | None = None,
         verbose: bool = False,
     ) -> tuple[str, str]:
-        """识别一张/两张图,返回 (文字, 成功provider)。全部失败抛 VisionError。
+        """识别一张/两张图,返回 (文字, 成功provider)。全部失败抛 VisionError。"""
+        refs = [image_ref] + ([image_ref2] if image_ref2 else [])
+        return self.caption_many(refs, prompt, verbose=verbose)
+
+    def caption_many(
+        self,
+        refs: list[str],
+        prompt: str,
+        verbose: bool = False,
+    ) -> tuple[str, str]:
+        """识别一到多张图,按供应商链降级并短暂冷却失败端点。
 
         特殊 provider 无需 API key:
         - demo:      演示模式,返回固定文案,零网络
         - local-ocr: 本地 OCR(rapidocr),离线提取图片文字
         """
+        refs = [ref for ref in refs if isinstance(ref, str) and ref]
+        if not refs:
+            raise VisionError("没有可识别的图片")
         if not self.clients:
             raise VisionError("未配置视觉供应商,请运行 `deepsee setup`")
         last_err = ""
-        for c in self.clients:
+        now = time.monotonic()
+        with self._failure_lock:
+            active = [
+                (i, c) for i, c in enumerate(self.clients)
+                if self._failed_until.get(i, 0) <= now
+            ]
+        # 所有后端都在冷却时仍尝试整条链,避免一次故障导致硬停机。
+        candidates = active or list(enumerate(self.clients))
+        for index, c in candidates:
             if c.provider == "demo":
                 text = _demo_text(prompt)
                 if verbose:
@@ -127,33 +162,46 @@ class VisionChain:
                 return text, "demo"
             if c.provider == "local-ocr":
                 try:
-                    text = _local_ocr(image_ref, c.provider)
+                    chunks = [_local_ocr(ref, c.provider) for ref in refs]
+                    text = chunks[0] if len(chunks) == 1 else "\n\n".join(
+                        f"图片 {i + 1}:\n{chunk}" for i, chunk in enumerate(chunks)
+                    )
                 except VisionError as e:
                     last_err = str(e)
+                    self._mark_failed(index)
                     if verbose:
                         cprint(f"  ✗ local-ocr 失败: {str(e)[:120]}", "yellow")
                     continue
                 if verbose:
                     cprint("  ✓ 本地 OCR 完成", "green")
+                self._mark_healthy(index)
                 return text, "local-ocr"
             try:
-                messages = c.build_messages(image_ref, prompt, image_ref2)
+                messages = c.build_messages_many(refs, prompt)
                 text = c.chat(messages)
                 text = (text or "").strip()
                 if not text:
                     raise VisionError(f"[{c.provider}] 返回空内容")
                 if verbose:
-                    from .util import cprint
-
                     cprint(f"  ✓ 识别成功({c.provider})", "green")
+                self._mark_healthy(index)
                 return text, c.provider
             except (VisionError, HttpError) as e:
                 last_err = str(e)
+                self._mark_failed(index)
                 if verbose:
-                    from .util import cprint
-
                     cprint(f"  ✗ {c.provider} 失败: {str(e)[:120]}", "yellow")
         raise VisionError(f"视觉链路全部失败: {last_err}")
+
+    def _mark_failed(self, index: int) -> None:
+        if not self.failure_cooldown:
+            return
+        with self._failure_lock:
+            self._failed_until[index] = time.monotonic() + self.failure_cooldown
+
+    def _mark_healthy(self, index: int) -> None:
+        with self._failure_lock:
+            self._failed_until.pop(index, None)
 
 
 def _demo_text(prompt: str) -> str:

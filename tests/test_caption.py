@@ -16,6 +16,8 @@ def test_build_prompt_modes():
     assert "逐字提取" in caption.build_prompt("ocr")
     assert caption.build_prompt("qa", "图中是什么狗?") == "图中是什么狗?"
     assert "详尽描述" in caption.build_prompt("unknown")  # 兜底
+    assert "报错" in caption.build_prompt("describe", task="error")
+    assert "技术图" in caption.build_prompt("describe", task="diagram")
 
 
 def test_image_ref_from_path(tmp_path):
@@ -63,6 +65,42 @@ def test_seer_describe_bytes(monkeypatch):
     s = caption.Seer([{"provider": "mock", "base_url": "x", "api_key": "k", "model": "m"}])
     text, _ = s.describe_bytes(PNG)
     assert text == "字节图 ok"
+
+
+def test_seer_cache_avoids_duplicate_vision_calls(monkeypatch):
+    calls = []
+
+    def fake_caption(self, ref, prompt, image_ref2=None, verbose=False):
+        calls.append((ref, prompt))
+        return "缓存结果", "mock"
+
+    monkeypatch.setattr("deepsee.caption.VisionChain.caption", fake_caption)
+    s = caption.Seer(
+        [{"provider": "mock", "base_url": "x", "api_key": "k", "model": "m"}],
+        cache_ttl=60, cache_max_entries=8,
+    )
+    first = s.describe_bytes(PNG, mode="qa", question="代码是什么？")
+    second = s.describe_bytes(PNG, mode="qa", question="代码是什么？")
+    assert first == second == ("缓存结果", "mock")
+    assert len(calls) == 1
+    s.describe_bytes(PNG, mode="qa", question="颜色是什么？")
+    assert len(calls) == 2
+
+
+def test_seer_compare_supports_multiple_images(monkeypatch):
+    captured = {}
+
+    def fake_many(self, refs, prompt, verbose=False):
+        captured["refs"] = refs
+        captured["prompt"] = prompt
+        return "两图差异", "mock"
+
+    monkeypatch.setattr("deepsee.caption.VisionChain.caption_many", fake_many)
+    s = caption.Seer([{"provider": "mock", "base_url": "x", "api_key": "k", "model": "m"}])
+    text, provider = s.compare_bytes([PNG, PNG + b"2"], question="找出差异")
+    assert (text, provider) == ("两图差异", "mock")
+    assert len(captured["refs"]) == 2
+    assert "找出差异" in captured["prompt"]
 
 
 def test_sniff_mime():

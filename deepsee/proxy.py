@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import hmac
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -60,8 +61,36 @@ class ProxyHandler(BaseHTTPRequestHandler):
         cprint(f"[proxy] {self.address_string()} {fmt % args}", "cyan")
 
     def _read_body(self) -> bytes:
-        length = int(self.headers.get("Content-Length") or 0)
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError as e:
+            raise ProxyError(400, "invalid Content-Length") from e
+        max_mb = (self.cfg.get("proxy") or {}).get("max_body_mb", 25)
+        try:
+            max_bytes = max(1, int(float(max_mb) * 1024 * 1024))
+        except (TypeError, ValueError):
+            max_bytes = 25 * 1024 * 1024
+        if length < 0:
+            raise ProxyError(400, "invalid Content-Length")
+        if length > max_bytes:
+            self._oversized_drain_limit = max_bytes + 64 * 1024
+            self.close_connection = True
+            raise ProxyError(413, f"request body too large (limit {max_mb} MB)")
         return self.rfile.read(length) if length else b""
+
+    def _drain_oversized_body(self) -> None:
+        """413 已发送后短暂排空请求体，让仍在上传的客户端读到响应。"""
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            remaining = min(length, getattr(self, "_oversized_drain_limit", 64 * 1024))
+            self.connection.settimeout(1.0)
+            while remaining > 0:
+                chunk = self.rfile.read(min(64 * 1024, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+        except (OSError, ValueError):
+            pass
 
     def _check_auth(self) -> None:
         master = (self.cfg.get("proxy") or {}).get("master_key", "")
@@ -69,7 +98,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             return
         auth = self.headers.get("Authorization", "")
         xkey = self.headers.get("x-api-key", "")
-        if auth == f"Bearer {master}" or xkey == master:
+        if hmac.compare_digest(auth, f"Bearer {master}") or hmac.compare_digest(xkey, master):
             return
         raise ProxyError(401, "invalid or missing api key")
 
@@ -115,6 +144,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
             if not raw:
                 raise ProxyError(400, "empty body")
             payload = json.loads(raw.decode("utf-8", "replace"))
+            if not isinstance(payload, dict):
+                raise ProxyError(400, "JSON body must be an object")
             if path == "/v1/chat/completions":
                 return self._openai_chat(payload)
             if path == "/v1/messages":
@@ -125,6 +156,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
         except (ProxyError, ValueError) as e:
             status = e.status if isinstance(e, ProxyError) else 400
             self._send_json(status, {"error": {"message": str(e)}})
+            if status == 413:
+                self._drain_oversized_body()
         except Exception as e:  # noqa: BLE001 兜底,不崩进程
             self._send_json(500, {"error": {"message": f"internal: {e}"}})
 

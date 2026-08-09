@@ -139,3 +139,48 @@ def test_setup_wizard_noninteractive_demo(tmp_path, monkeypatch):
     # 只写了配置,未动真实 home 的任何文件、不写项目级 .mcp.json
     assert (tmp_path / ".deepsee" / "config.json").exists()
     assert not (tmp_path / ".mcp.json").exists()
+
+
+def test_quick_setup_does_not_prompt_for_generation(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("DEEPSEE_HOME", str(tmp_path / ".deepsee"))
+    monkeypatch.setattr(installer.Path, "home", classmethod(lambda cls: tmp_path))
+    prompts = []
+    demo_idx = list(installer.PROVIDERS.keys()).index("demo") + 1
+
+    def answer(prompt, default=""):
+        prompts.append(prompt)
+        return str(demo_idx) if "选择" in prompt else default
+
+    monkeypatch.setattr(installer, "_ask", answer)
+    monkeypatch.setattr(installer, "_read_secret", lambda prompt, default="": default)
+    monkeypatch.setattr(installer, "detect_agents", lambda: {
+        "claude_code": False, "codex": False, "opencode": False, "cursor": False,
+    })
+    monkeypatch.setattr(installer, "install_mcp", lambda: False)
+    assert installer.setup_wizard(advanced=False) == 0
+    assert not any("文生图" in p for p in prompts)
+    assert not any("识图模式" in p for p in prompts)
+    assert not any("模型名" in p for p in prompts)
+    assert not any("上游协议格式" in p for p in prompts)
+
+
+def test_setup_preserves_existing_visual_provider_and_secret(tmp_path, monkeypatch):
+    monkeypatch.setenv("DEEPSEE_HOME", str(tmp_path / ".deepsee"))
+    cfg = installer.load()
+    cfg["vision"]["chain"] = [{
+        "provider": "custom", "base_url": "https://vision.example/v1",
+        "model": "my-vlm", "api_key": "keep-me",
+    }]
+    monkeypatch.setattr(installer, "_ask", lambda prompt, default="": default)
+    monkeypatch.setattr(installer, "_read_secret", lambda prompt, default="": default)
+    monkeypatch.setattr(installer, "detect_agents", lambda: {
+        "claude_code": False, "codex": False, "opencode": False, "cursor": False,
+    })
+    monkeypatch.setattr(installer, "install_mcp", lambda: False)
+    assert installer.setup_wizard(cfg, advanced=False) == 0
+    saved = installer.load()["vision"]["chain"][0]
+    assert saved["provider"] == "custom"
+    assert saved["base_url"] == "https://vision.example/v1"
+    assert saved["model"] == "my-vlm"
+    assert saved["api_key"] == "keep-me"

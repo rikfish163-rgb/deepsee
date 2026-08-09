@@ -1,8 +1,8 @@
 # PRD — deepsee
 
-**给 DeepSeek 等纯文本模型补齐「看图 + 画图」能力的零依赖工具全家桶**
+**给 DeepSeek 等纯文本模型补齐「看图」能力的零依赖、厂商无关视觉桥接器**
 
-- 版本:0.1 / 日期:2026-08-07 / 作者:hetaisheng
+- 版本:0.2 / 日期:2026-08-09 / 作者:hetaisheng
 
 ## 1. 背景与问题
 
@@ -42,10 +42,10 @@ DeepSeek 官方 API 是纯文本模型,不能处理 `image_url` / `image` 内容
 4. **双协议代理** — `/v1/chat/completions`(OpenAI)+ `/v1/messages`(Anthropic),图片→文字,转发 DeepSeek
 5. **Web 面板** — 状态 / 测试 / 配置
 
-### 3.3 不在范围(0.1)
+### 3.3 不在范围(0.2)
 
 - 不做 DeepSeek 网页 token 抓取(PoW/WASM)——脆弱且违反服务条款
-- 不做本地 VLM 部署(依赖 GPU/Ollama)——仅作为可选项保留
+- 不捆绑或自动部署本地 VLM——Ollama `gemma3` 仅作为用户自选后端
 - 不做多租户 / 计费
 
 ## 4. 用户故事

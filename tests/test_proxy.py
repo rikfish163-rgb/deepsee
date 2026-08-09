@@ -152,6 +152,48 @@ def test_anthropic_same_protocol(mock_vision, mock_upstream):
         srv.shutdown(); srv.server_close()
 
 
+def test_anthropic_url_image_supported(mock_vision, mock_upstream):
+    srv, port = _start_proxy(_cfg(mock_upstream["port"], mock_vision["port"], fmt="openai"))
+    try:
+        body = {
+            "model": "deepseek-v4-flash", "max_tokens": 128,
+            "messages": [{"role": "user", "content": [
+                {"type": "text", "text": "读取这张图"},
+                {"type": "image", "source": {"type": "url", "url": "https://example.com/a.png"}},
+            ]}],
+        }
+        status, _ = _post(port, "/v1/messages", body)
+        assert status == 200
+        vision_sent = json.loads(mock_vision["rec"].requests[-1])
+        image = vision_sent["messages"][0]["content"][0]
+        assert image["image_url"]["url"] == "https://example.com/a.png"
+    finally:
+        srv.shutdown(); srv.server_close()
+
+
+def test_proxy_rejects_oversized_body_before_upstream(mock_vision, mock_upstream):
+    cfg = _cfg(mock_upstream["port"], mock_vision["port"])
+    cfg["proxy"]["max_body_mb"] = 1
+    srv, port = _start_proxy(cfg)
+    try:
+        status, resp = _post(port, "/v1/chat/completions", {"padding": "x" * (1024 * 1024 + 1)})
+        assert status == 413
+        assert "large" in resp.decode("utf-8").lower() or "过大" in resp.decode("utf-8")
+        assert not mock_upstream["rec"].requests
+    finally:
+        srv.shutdown(); srv.server_close()
+
+
+def test_proxy_rejects_non_object_json(mock_vision, mock_upstream):
+    srv, port = _start_proxy(_cfg(mock_upstream["port"], mock_vision["port"]))
+    try:
+        status, _ = _post(port, "/v1/chat/completions", [])
+        assert status == 400
+        assert not mock_upstream["rec"].requests
+    finally:
+        srv.shutdown(); srv.server_close()
+
+
 def test_auth_required(mock_vision, mock_upstream):
     srv, port = _start_proxy(_cfg(mock_upstream["port"], mock_vision["port"], master="secret"))
     try:

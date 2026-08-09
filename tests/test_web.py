@@ -210,3 +210,22 @@ def test_put_config_forbidden_origin(web_env):
             assert r.status != 200  # 不应成功
     except urllib.error.HTTPError as e:
         assert e.code == 403
+
+
+def test_web_rejects_non_object_json(web_env):
+    status, body = _req(web_env["port"], "POST", "/api/test", [])
+    assert status == 400
+    assert "object" in json.loads(body)["error"]
+
+
+def test_web_rejects_oversized_body(web_env):
+    from deepsee.config import save
+
+    cfg = web_env["cfg"]
+    cfg["web"]["max_body_mb"] = 1
+    save(cfg)
+    status, body = _req(
+        web_env["port"], "POST", "/api/test", {"padding": "x" * (1024 * 1024 + 1)}
+    )
+    assert status == 413
+    assert "large" in json.loads(body)["error"].lower()
