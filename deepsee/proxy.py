@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import hmac
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -60,7 +61,21 @@ class ProxyHandler(BaseHTTPRequestHandler):
         cprint(f"[proxy] {self.address_string()} {fmt % args}", "cyan")
 
     def _read_body(self) -> bytes:
-        length = int(self.headers.get("Content-Length") or 0)
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError as e:
+            raise ProxyError(400, "invalid Content-Length") from e
+        max_mb = (self.cfg.get("proxy") or {}).get("max_body_mb", 25)
+        try:
+            max_bytes = max(1, int(float(max_mb) * 1024 * 1024))
+        except (TypeError, ValueError):
+            max_bytes = 25 * 1024 * 1024
+        if length < 0:
+            raise ProxyError(400, "invalid Content-Length")
+        if length > max_bytes:
+            # 请求体尚未读取,响应后关闭连接以免残留字节被解析成下一次请求。
+            self.close_connection = True
+            raise ProxyError(413, f"request body too large (limit {max_mb} MB)")
         return self.rfile.read(length) if length else b""
 
     def _check_auth(self) -> None:
@@ -69,7 +84,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             return
         auth = self.headers.get("Authorization", "")
         xkey = self.headers.get("x-api-key", "")
-        if auth == f"Bearer {master}" or xkey == master:
+        if hmac.compare_digest(auth, f"Bearer {master}") or hmac.compare_digest(xkey, master):
             return
         raise ProxyError(401, "invalid or missing api key")
 
@@ -115,6 +130,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
             if not raw:
                 raise ProxyError(400, "empty body")
             payload = json.loads(raw.decode("utf-8", "replace"))
+            if not isinstance(payload, dict):
+                raise ProxyError(400, "JSON body must be an object")
             if path == "/v1/chat/completions":
                 return self._openai_chat(payload)
             if path == "/v1/messages":

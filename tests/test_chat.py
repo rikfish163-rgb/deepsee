@@ -41,6 +41,48 @@ def test_build_openai_payload_replaces_images(mock_vision):
     # 原 payload 不被修改
     assert any(c.get("type") == "image_url" for c in payload["messages"][0]["content"])
 
+    # 视觉提示应带上用户问题,避免先泛化描述再让 DeepSeek 猜重点。
+    vision_request = json.loads(mock_vision["rec"].requests[-1])
+    vision_prompt = vision_request["messages"][0]["content"][-1]["text"]
+    assert "帮我看看" in vision_prompt
+
+
+def test_openai_string_image_url_and_responses_input_image(mock_vision):
+    cfg = _cfg(0, mock_vision["port"])
+    payload = {"model": "m", "messages": [{"role": "user", "content": [
+        {"type": "input_text", "text": "读取截图错误"},
+        {"type": "image_url", "image_url": IMG},
+        {"type": "input_image", "image_url": IMG},
+    ]}]}
+    out = chat.build_openai_payload(cfg, payload)
+    content = out["messages"][0]["content"]
+    assert all(c["type"] not in ("image_url", "input_image") for c in content)
+    joined = "".join(c.get("text", "") for c in content)
+    assert "[Image 1" in joined and "[Image 2" in joined
+    assert "读取截图错误" in json.loads(mock_vision["rec"].requests[-1])["messages"][0]["content"][-1]["text"]
+
+
+def test_anthropic_url_image_uses_question_context():
+    class FakeSeer:
+        def __init__(self):
+            self.calls = []
+
+        def describe(self, source, mode="", question="", verbose=False):
+            self.calls.append((source, mode, question))
+            return "错误截图描述", "mock"
+
+    seer = FakeSeer()
+    conv = chat.Converter(seer)
+    out, count = conv.anthropic_content([
+        {"type": "text", "text": "这个报错怎么修？"},
+        {"type": "image", "source": {"type": "url", "url": "https://example.com/error.png"}},
+    ])
+    assert count == 1
+    assert seer.calls[0][0] == "https://example.com/error.png"
+    assert seer.calls[0][1] == "qa"
+    assert "这个报错怎么修" in seer.calls[0][2]
+    assert "视觉内容" in "".join(x.get("text", "") for x in out)
+
 
 def test_build_openai_payload_passthrough_without_image(mock_vision):
     cfg = _cfg(0, mock_vision["port"])

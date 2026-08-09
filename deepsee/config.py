@@ -116,10 +116,18 @@ PROVIDERS: dict[str, dict[str, str]] = {
         "fee": "免费离线",
         "note": "需安装 deepsee[ocr]",
     },
+    "ollama": {
+        "label": "Ollama gemma3(本地免 key)",
+        "base_url": "http://127.0.0.1:11434/v1",
+        "model": "gemma3",
+        "fee": "免费离线",
+        "note": "先运行 `ollama pull gemma3`;兼容 OpenAI 视觉接口",
+    },
 }
 
 # 不需要 api_key / base_url 的 provider(本地或演示)
-NO_KEY_PROVIDERS = {"demo", "local-ocr"}
+NO_KEY_PROVIDERS = {"demo", "local-ocr", "ollama"}
+NO_ENDPOINT_PROVIDERS = {"demo", "local-ocr"}
 
 # 文生图后端预设(OpenAI 兼容 /images/generations)
 GEN_PROVIDERS: dict[str, dict[str, str]] = {
@@ -168,6 +176,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "max_tokens": 2048,
         "timeout": 60,
         "max_px": 1024,
+        "cache_ttl": 300,
+        "cache_max_entries": 128,
+        "failure_cooldown": 30,
     },
     "upstream": {
         "base_url": "https://api.deepseek.com/v1",
@@ -179,6 +190,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "proxy": {
         "port": 8081,  # 8080 常被本机其他服务占用,默认换 8081
         "master_key": "",
+        "max_body_mb": 25,
     },
     "generation": {
         "provider": "siliconflow",
@@ -188,6 +200,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "web": {
         "port": 8090,
+        "max_body_mb": 25,
     },
     "agents": {
         "claude_code": {
@@ -227,8 +240,53 @@ def deep_merge(base: dict, override: dict) -> dict:
     return _merge_inplace(deepcopy(base), override)
 
 
+def _apply_env_overrides(base: dict) -> dict:
+    """叠加显式 ``DEEPSEE_*`` 环境变量,且不修改磁盘配置缓存。
+
+    这让容器、CI 和临时 shell 可以只靠环境变量启动,同时避免把环境中的
+    secret 在下一次普通 ``load()`` 时意外写进 config.json。
+    """
+    data = deepcopy(base)
+
+    vision_values = {
+        "api_key": os.environ.get("DEEPSEE_VISION_API_KEY"),
+        "base_url": os.environ.get("DEEPSEE_VISION_BASE_URL"),
+        "model": os.environ.get("DEEPSEE_VISION_MODEL"),
+    }
+    chain = data.setdefault("vision", {}).setdefault("chain", [])
+    # base_url/model 足以表达一个自定义 OpenAI 兼容视觉端点;key 可为空
+    # (例如本地 Ollama)。仅有孤立 key 时不凭空创建无效端点。
+    if not chain and (vision_values["base_url"] is not None or vision_values["model"] is not None):
+        chain.append({
+            "provider": "env",
+            "base_url": vision_values["base_url"] or "",
+            "model": vision_values["model"] or "",
+            "api_key": vision_values["api_key"] or "",
+        })
+    elif chain:
+        for key, value in vision_values.items():
+            if value is not None:
+                chain[0][key] = value
+
+    upstream = data.setdefault("upstream", {})
+    upstream_env = {
+        "api_key": "DEEPSEE_UPSTREAM_API_KEY",
+        "base_url": "DEEPSEE_UPSTREAM_BASE_URL",
+        "anthropic_base_url": "DEEPSEE_UPSTREAM_ANTHROPIC_BASE_URL",
+        "model": "DEEPSEE_UPSTREAM_MODEL",
+        "format": "DEEPSEE_UPSTREAM_FORMAT",
+    }
+    for key, env_name in upstream_env.items():
+        if env_name in os.environ:
+            upstream[key] = os.environ[env_name]
+
+    if "DEEPSEE_PROXY_MASTER_KEY" in os.environ:
+        data.setdefault("proxy", {})["master_key"] = os.environ["DEEPSEE_PROXY_MASTER_KEY"]
+    return data
+
+
 def load() -> dict:
-    """读配置。按 (路径, mtime_ns) 缓存:文件未变则只深拷贝一次,不重读磁盘。"""
+    """读配置。磁盘层按 mtime 缓存,环境变量在每次调用时动态叠加。"""
     p = config_path()
     try:
         mtime = os.stat(p).st_mtime_ns if os.path.exists(p) else None
@@ -236,10 +294,10 @@ def load() -> dict:
         mtime = None
     c = _load_cache
     if c["path"] == p and c["mtime_ns"] == mtime:
-        return deepcopy(c["data"])
+        return _apply_env_overrides(c["data"])
     data = _merge_inplace(deepcopy(DEFAULT_CONFIG), _read_json(p))
     c.update(path=p, mtime_ns=mtime, data=data)
-    return deepcopy(data)
+    return _apply_env_overrides(data)
 
 
 def _read_json(p: str) -> dict:
@@ -250,11 +308,53 @@ def _read_json(p: str) -> dict:
         return {}
 
 
+def _remove_env_overrides_before_save(cfg: dict, p: str) -> dict:
+    """保存前还原环境覆盖字段,防止运行时注入值被顺带持久化。"""
+    data = deepcopy(cfg)
+    disk = _merge_inplace(deepcopy(DEFAULT_CONFIG), _read_json(p))
+
+    vision_env = {
+        "api_key": "DEEPSEE_VISION_API_KEY",
+        "base_url": "DEEPSEE_VISION_BASE_URL",
+        "model": "DEEPSEE_VISION_MODEL",
+    }
+    if any(name in os.environ for name in vision_env.values()):
+        out_chain = data.get("vision", {}).get("chain", [])
+        disk_chain = disk.get("vision", {}).get("chain", [])
+        if out_chain and not disk_chain and out_chain[0].get("provider") == "env":
+            data["vision"]["chain"] = []
+        elif out_chain:
+            old = disk_chain[0] if disk_chain else {}
+            for key, env_name in vision_env.items():
+                if env_name in os.environ:
+                    out_chain[0][key] = old.get(key, "")
+
+    upstream_env = {
+        "api_key": "DEEPSEE_UPSTREAM_API_KEY",
+        "base_url": "DEEPSEE_UPSTREAM_BASE_URL",
+        "anthropic_base_url": "DEEPSEE_UPSTREAM_ANTHROPIC_BASE_URL",
+        "model": "DEEPSEE_UPSTREAM_MODEL",
+        "format": "DEEPSEE_UPSTREAM_FORMAT",
+    }
+    for key, env_name in upstream_env.items():
+        if env_name in os.environ:
+            data.setdefault("upstream", {})[key] = disk.get("upstream", {}).get(
+                key, DEFAULT_CONFIG["upstream"].get(key, "")
+            )
+
+    if "DEEPSEE_PROXY_MASTER_KEY" in os.environ:
+        data.setdefault("proxy", {})["master_key"] = disk.get("proxy", {}).get(
+            "master_key", ""
+        )
+    return data
+
+
 def save(cfg: dict) -> str:
     p = config_path()
     tmp = p + ".tmp"
+    persisted = _remove_env_overrides_before_save(cfg, p)
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, ensure_ascii=False, indent=2)
+        json.dump(persisted, f, ensure_ascii=False, indent=2)
     os.replace(tmp, p)
     try:
         os.chmod(p, 0o600)
@@ -275,16 +375,30 @@ def validate(cfg: dict) -> list[str]:
     if not chain:
         problems.append("视觉链为空:运行 `deepsee setup` 或编辑 config.json 添加视觉 API")
     for i, item in enumerate(chain):
-        if item.get("provider") in NO_KEY_PROVIDERS:
-            continue  # demo / 本地 OCR 不需要 key
-        if not item.get("api_key"):
+        provider = item.get("provider")
+        base_url = item.get("base_url", "")
+        if provider not in NO_KEY_PROVIDERS and not _is_local_endpoint(base_url) and not item.get("api_key"):
             problems.append(f"视觉链第 {i + 1} 项缺少 api_key")
-        if not item.get("base_url"):
+        if provider not in NO_ENDPOINT_PROVIDERS and not base_url:
             problems.append(f"视觉链第 {i + 1} 项缺少 base_url")
     up = cfg.get("upstream", {})
     if not up.get("api_key"):
         problems.append("上游(DeepSeek)未配置 api_key(仅代理/会话路径需要,CLI 识图不需要)")
     return problems
+
+
+def _is_local_endpoint(url: str) -> bool:
+    """本机 OpenAI 兼容端点(如 Ollama/vLLM)通常无需 API key。"""
+    try:
+        import ipaddress
+        from urllib.parse import urlparse
+
+        host = (urlparse(url).hostname or "").lower()
+        if host == "localhost":
+            return True
+        return bool(host and ipaddress.ip_address(host).is_loopback)
+    except ValueError:
+        return False
 
 
 def vision_chain(cfg: dict) -> list[dict]:

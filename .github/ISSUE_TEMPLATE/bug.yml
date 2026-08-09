@@ -1,0 +1,67 @@
+name: Bug 报告
+description: 报告可复现的错误或兼容性问题
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈。请先删除 API key、私有图片、完整配置和敏感日志；安全漏洞请走仓库 Security 页的私密报告入口。
+  - type: input
+    id: version
+    attributes:
+      label: deepsee 版本
+      description: 运行 `deepsee --version` 获取。
+      placeholder: deepsee 0.2.0
+    validations:
+      required: true
+  - type: dropdown
+    id: integration
+    attributes:
+      label: 接入方式
+      options:
+        - CLI
+        - MCP
+        - OpenAI 兼容代理
+        - Anthropic 兼容代理
+        - Claude Code Hook / Route
+        - Web 面板
+        - 安装或配置
+        - 其他
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 最小复现步骤
+      description: 写明执行的命令或请求结构；所有凭据必须替换为 `<redacted>`。
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期行为
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为与脱敏日志
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: 环境
+      placeholder: Ubuntu 24.04 / Python 3.12 / 客户端版本
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已删除 API key、令牌、私有图片、完整配置和其他敏感信息。
+          required: true
+        - label: 我已确认问题在当前 main 分支仍可复现。
+          required: true

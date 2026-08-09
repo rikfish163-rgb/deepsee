@@ -1,9 +1,10 @@
 """手写轻量 MCP Server(stdio JSON-RPC 2.0,零依赖)。
 
 协议:MCP stdio 走换行分隔的 JSON-RPC(与官方 SDK 一致)。
-实现:initialize / ping / tools/list / tools/call;未声明的 capability
+实现:initialize / server/discover / ping / tools/list / tools/call;未声明的 capability
 (resources/prompts/completions)返回空结果而非报错;通知类忽略。
-工具:describe_image(see) / ocr_image / generate_image / vision_status。
+工具:analyze_image / describe_image(兼容别名) / compare_images / ocr_image /
+generate_image(可选) / vision_status。
 仅标准库,零第三方依赖。
 """
 
@@ -20,6 +21,23 @@ from .generate import ImageGenClient
 
 TOOLS: list[dict] = [
     {
+        "name": "analyze_image",
+        "description": "按用户问题和任务类型理解图片。支持本地路径、URL、data URI 或留空取最近截图。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "source": {"type": "string", "description": "图片路径、URL、data URI;留空=最近截图"},
+                "question": {"type": "string", "description": "希望从图片回答的问题"},
+                "task": {
+                    "type": "string",
+                    "enum": ["general", "error", "diagram", "chart", "ui", "screenshot"],
+                    "default": "general",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
         "name": "describe_image",
         "description": "识别图片(本地路径 / URL / 剪贴板留空),返回详细文字描述。DeepSeek 等纯文本模型用它'看'图。",
         "inputSchema": {
@@ -29,8 +47,31 @@ TOOLS: list[dict] = [
                            "description": "图片路径或 http(s) URL;留空则用最近截图/剪贴板"},
                 "mode": {"type": "string", "enum": ["describe", "ocr", "qa"], "default": "describe"},
                 "question": {"type": "string", "description": "mode=qa 时的问题"},
+                "task": {
+                    "type": "string",
+                    "enum": ["general", "error", "diagram", "chart", "ui", "screenshot"],
+                    "description": "可选专用视觉任务",
+                },
             },
             "required": [],
+        },
+    },
+    {
+        "name": "compare_images",
+        "description": "比较 2–4 张图片,返回共同点、差异和变化位置。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "sources": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "minItems": 2,
+                    "maxItems": 4,
+                    "description": "图片路径、URL 或 data URI 列表",
+                },
+                "question": {"type": "string", "description": "对比时重点回答的问题"},
+            },
+            "required": ["sources"],
         },
     },
     {
@@ -59,13 +100,19 @@ TOOLS: list[dict] = [
 ]
 
 SERVER_INFO = {"name": "deepsee", "version": __version__}
-PROTOCOL_VERSION = "2025-06-18"
-_KNOWN_PROTOCOL_VERSIONS = {"2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"}
+PROTOCOL_VERSION = "2026-07-28"
+_KNOWN_PROTOCOL_VERSIONS = {
+    "2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25", "2026-07-28"
+}
 CAPABILITIES = {"tools": {"listChanged": False}}
+LIST_TTL_MS = 300_000
 # 单次工具结果上限(避免撑爆客户端 tool result 缓冲)
 MAX_RESULT_CHARS = 200_000
 # 工具名白名单(含 see 别名)
-_KNOWN_TOOLS = {"describe_image", "see", "ocr_image", "generate_image", "vision_status"}
+_KNOWN_TOOLS = {
+    "analyze_image", "describe_image", "see", "compare_images", "ocr_image",
+    "generate_image", "vision_status",
+}
 
 
 class McpServer:
@@ -103,19 +150,45 @@ class McpServer:
                     "describe_image(路径/URL/留空=最近截图),提取文字用 ocr_image。"
                 ),
             })
+        if method == "server/discover":
+            # MCP 2026-07-28 的无状态发现入口;保留 initialize 兼容旧客户端。
+            return _response(msg_id, {
+                "supportedVersions": sorted(_KNOWN_PROTOCOL_VERSIONS),
+                "capabilities": CAPABILITIES,
+                "serverInfo": SERVER_INFO,
+                "instructions": (
+                    "图片理解优先调用 analyze_image;纯 OCR 用 ocr_image;"
+                    "两到四图差异用 compare_images。"
+                ),
+                "resultType": "complete",
+                "ttlMs": LIST_TTL_MS,
+                "cacheScope": "public",
+                "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,
+                    "io.modelcontextprotocol/serverInfo": SERVER_INFO,
+                },
+            })
         if method == "ping":
             return _response(msg_id, {})
         if method == "tools/list":
-            return _response(msg_id, {"tools": TOOLS})
+            return _response(msg_id, {
+                "tools": TOOLS,
+                "ttlMs": LIST_TTL_MS,
+                "cacheScope": "public",
+            })
         if method == "tools/call":
             return self._tool_call(msg_id, params)
         # 未声明的 capability,给空结果而非报错(部分客户端会探测)
         if method == "resources/list":
-            return _response(msg_id, {"resources": []})
+            return _response(msg_id, {
+                "resources": [], "ttlMs": LIST_TTL_MS, "cacheScope": "public"
+            })
         if method == "resources/templates/list":
             return _response(msg_id, {"resourceTemplates": []})
         if method == "prompts/list":
-            return _response(msg_id, {"prompts": []})
+            return _response(msg_id, {
+                "prompts": [], "ttlMs": LIST_TTL_MS, "cacheScope": "public"
+            })
         if method == "completions/complete":
             return _response(msg_id, {"completion": {"values": [], "total": 0}})
         if method == "resources/read":
@@ -151,10 +224,21 @@ class McpServer:
             })
 
     def _run(self, name: str, args: dict) -> str:
-        if name in ("describe_image", "see"):
-            return self._describe(args.get("source", ""), args.get("mode", ""), args.get("question", ""))
+        if name in ("analyze_image", "describe_image", "see"):
+            mode = args.get("mode", "")
+            if name == "analyze_image" and not mode:
+                mode = "qa" if args.get("question") else "describe"
+            return self._describe(
+                args.get("source", ""), mode, args.get("question", ""), args.get("task", "")
+            )
+        if name == "compare_images":
+            sources = args.get("sources")
+            if not isinstance(sources, list) or not all(isinstance(x, str) for x in sources):
+                raise ValueError("sources 必须是包含 2–4 个图片路径/URL 的数组")
+            text, provider = self._seer().compare(sources, question=args.get("question", ""))
+            return f"[provider: {provider}]\n{text}"
         if name == "ocr_image":
-            return self._describe(args.get("source", ""), "ocr", "")
+            return self._describe(args.get("source", ""), "ocr", "", "")
         if name == "generate_image":
             return self._generate(args)
         if name == "vision_status":
@@ -176,11 +260,11 @@ class McpServer:
             self._seer_mtime = mtime
         return self._seer_cache
 
-    def _describe(self, source: str, mode: str, question: str) -> str:
+    def _describe(self, source: str, mode: str, question: str, task: str = "") -> str:
         if not self.cfg.get("vision", {}).get("chain"):
             raise ValueError("未配置视觉 API。请先运行 `deepsee setup` 或编辑 ~/.deepsee/config.json。")
         seer = self._seer()
-        text, provider = seer.describe(source, mode=mode, question=question)
+        text, provider = seer.describe(source, mode=mode, question=question, task=task)
         return f"[provider: {provider}]\n{text}"
 
     def _generate(self, args: dict) -> str:

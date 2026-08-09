@@ -53,7 +53,7 @@ def _is_alive(pid: int | None) -> bool:
 def _cmd_setup(args) -> int:
     from .installer import setup_wizard
 
-    return setup_wizard()
+    return setup_wizard(advanced=bool(getattr(args, "advanced", False)))
 
 
 def _cmd_see(args) -> int:
@@ -77,13 +77,45 @@ def _cmd_see(args) -> int:
         cprint("请提供图片路径/URL,或用 --latest 取最近一张,或先截图", "yellow")
         return 1
     try:
-        text, provider = seer.describe(source, mode=mode, question=args.question, verbose=args.verbose)
+        text, provider = seer.describe(
+            source,
+            mode=mode,
+            question=args.question or "",
+            task=getattr(args, "task", "") or "",
+            verbose=args.verbose,
+        )
     except Exception as e:  # noqa: BLE001
         cprint(f"识别失败: {e}", "red")
         return 1
     if args.output:
         Path(args.output).write_text(text, encoding="utf-8")
         cprint(f"已保存描述 → {args.output}", "green")
+    else:
+        cprint(f"── [{provider}] ──", "cyan")
+        print(text)
+    return 0
+
+
+def _cmd_compare(args) -> int:
+    cfg = load()
+    if not cfg.get("vision", {}).get("chain"):
+        cprint("未配置视觉 API,请先运行 `deepsee setup`", "red")
+        return 1
+    if not 2 <= len(args.sources) <= 4:
+        cprint("图片对比需要 2–4 张图片", "red")
+        return 2
+    try:
+        text, provider = Seer.from_config(cfg).compare(
+            args.sources,
+            question=args.question or "",
+            verbose=args.verbose,
+        )
+    except Exception as e:  # noqa: BLE001
+        cprint(f"对比失败: {e}", "red")
+        return 1
+    if args.output:
+        Path(args.output).write_text(text, encoding="utf-8")
+        cprint(f"已保存对比结果 → {args.output}", "green")
     else:
         cprint(f"── [{provider}] ──", "cyan")
         print(text)
@@ -112,7 +144,7 @@ def _cmd_start(args) -> int:
     cfg = load()
     from .proxy import serve_forever
 
-    port = args.port or cfg["proxy"].get("port", 8080)
+    port = args.port or cfg["proxy"].get("port", 8081)
     host = args.host or "127.0.0.1"
     if args.daemon:
         return _daemonize("proxy", [sys.executable, "-m", "deepsee", "start", "--port", str(port)])
@@ -409,7 +441,7 @@ def _cmd_uninstall(args) -> int:
 def _cmd_client_cfg(args) -> int:
     cfg = load()
     up = cfg.get("upstream", {})
-    port = cfg["proxy"].get("port", 8080)
+    port = cfg["proxy"].get("port", 8081)
     master = cfg["proxy"].get("master_key", "")
     base = f"http://127.0.0.1:{port}/v1"
     model = up.get("model", "deepseek-v4-flash")
@@ -433,7 +465,7 @@ def _cmd_client_cfg(args) -> int:
 def _cmd_ui(args) -> int:
     """一键:起代理 + 起面板 + 打开浏览器。"""
     cfg = load()
-    proxy_port = cfg["proxy"].get("port", 8080)
+    proxy_port = cfg["proxy"].get("port", 8081)
     web_port = cfg["web"].get("port", 8090)
     _daemonize("proxy", [sys.executable, "-m", "deepsee", "start", "--port", str(proxy_port)])
     _daemonize("web", [sys.executable, "-m", "deepsee", "web", "--port", str(web_port)])
@@ -513,12 +545,19 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="cmd")
 
     s = sub.add_parser("setup", help="安装向导(配置视觉/上游/集成)")
+    s.add_argument("--advanced", action="store_true", help="同时配置端口和可选文生图")
     s.set_defaults(fn=_cmd_setup)
 
     s = sub.add_parser("see", help="看图:图片 → 文字描述")
     s.add_argument("source", nargs="?", help="图片路径/URL(留空需配合 --latest 或先截图)")
     s.add_argument("-m", "--mode", choices=["describe", "ocr", "qa"])
     s.add_argument("-q", "--question")
+    s.add_argument(
+        "--task",
+        choices=["general", "error", "diagram", "chart", "ui", "screenshot"],
+        default="",
+        help="专用视觉任务(未填时按问题自动判断)",
+    )
     s.add_argument("--latest", action="store_true", help="从 Claude Code/Codex 会话日志取最近图片")
     s.add_argument("-o", "--output", help="描述写入文件")
     s.add_argument("-v", "--verbose", action="store_true")
@@ -530,7 +569,14 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("-o", "--output")
     s.add_argument("-v", "--verbose", action="store_true")
     # 复用 _cmd_see,补齐它访问的属性,避免 Namespace 缺属性崩溃
-    s.set_defaults(fn=_cmd_see, mode="ocr", question="")
+    s.set_defaults(fn=_cmd_see, mode="ocr", question="", task="")
+
+    s = sub.add_parser("compare", help="比较 2–4 张图片")
+    s.add_argument("sources", nargs="+", help="图片路径/URL(2–4 个)")
+    s.add_argument("-q", "--question", default="")
+    s.add_argument("-o", "--output", help="对比结果写入文件")
+    s.add_argument("-v", "--verbose", action="store_true")
+    s.set_defaults(fn=_cmd_compare)
 
     s = sub.add_parser("gen", help="文生图")
     s.add_argument("prompt")

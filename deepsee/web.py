@@ -30,6 +30,10 @@ _seer_cache = None
 _seer_mtime: int | None = None
 
 
+class _BodyTooLarge(Exception):
+    pass
+
+
 def _get_seer(cfg: dict) -> Seer:
     global _seer_cache, _seer_mtime
     import os
@@ -80,7 +84,20 @@ class WebHandler(BaseHTTPRequestHandler):
         self._send(status, json.dumps(obj, ensure_ascii=False).encode("utf-8"))
 
     def _read_body(self) -> bytes:
-        length = int(self.headers.get("Content-Length") or 0)
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError as e:
+            raise ValueError("invalid Content-Length") from e
+        max_mb = load().get("web", {}).get("max_body_mb", 25)
+        try:
+            max_bytes = max(1, int(float(max_mb) * 1024 * 1024))
+        except (TypeError, ValueError):
+            max_bytes = 25 * 1024 * 1024
+        if length < 0:
+            raise ValueError("invalid Content-Length")
+        if length > max_bytes:
+            self.close_connection = True
+            raise _BodyTooLarge(f"request body too large (limit {max_mb} MB)")
         return self.rfile.read(length) if length else b""
 
     def _check_origin(self) -> bool:
@@ -147,11 +164,18 @@ class WebHandler(BaseHTTPRequestHandler):
         if not self._check_origin():
             return self._json(403, {"error": "forbidden origin"})
         path = self.path.split("?")[0]
-        raw = self._read_body()
+        try:
+            raw = self._read_body()
+        except _BodyTooLarge as e:
+            return self._json(413, {"error": str(e)})
+        except ValueError as e:
+            return self._json(400, {"error": str(e)})
         try:
             body = json.loads(raw.decode("utf-8", "replace") or "{}")
         except json.JSONDecodeError:
             return self._json(400, {"error": "invalid json"})
+        if not isinstance(body, dict):
+            return self._json(400, {"error": "JSON body must be an object"})
         if path == "/api/test":
             return self._api_test(body)
         if path == "/api/gen":
@@ -170,13 +194,20 @@ class WebHandler(BaseHTTPRequestHandler):
         if not self._check_origin():
             return self._json(403, {"error": "forbidden origin"})
         path = self.path.split("?")[0]
-        raw = self._read_body()
+        try:
+            raw = self._read_body()
+        except _BodyTooLarge as e:
+            return self._json(413, {"error": str(e)})
+        except ValueError as e:
+            return self._json(400, {"error": str(e)})
         if path != "/api/config":
             return self._json(404, {"error": "not found"})
         try:
             patch = json.loads(raw.decode("utf-8", "replace") or "{}")
         except json.JSONDecodeError:
             return self._json(400, {"error": "invalid json"})
+        if not isinstance(patch, dict):
+            return self._json(400, {"error": "JSON body must be an object"})
         cfg = load()
         new_cfg = deep_merge(cfg, _restore_masked_keys(cfg, patch))
         save(new_cfg)
@@ -342,7 +373,7 @@ def _status_payload() -> dict:
         "problems": validate(cfg),
         "ports": {"proxy": cfg["proxy"].get("port"), "web": cfg["web"].get("port")},
         "integration": {
-            "base_url": f"http://127.0.0.1:{cfg['proxy'].get('port', 8080)}/v1",
+            "base_url": f"http://127.0.0.1:{cfg['proxy'].get('port', 8081)}/v1",
             "model": cfg["upstream"].get("model", ""),
             "master_key": _mask_key(cfg["proxy"].get("master_key", "")),
         },

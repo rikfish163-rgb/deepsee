@@ -22,7 +22,11 @@ def _server(monkeypatch):
     monkeypatch.setattr("deepsee.mcp_server.load", lambda: cfg)
     monkeypatch.setattr(
         "deepsee.mcp_server.Seer.describe",
-        lambda self, source, mode="", question="", verbose=False: ("一张猫图", "mock"),
+        lambda self, source, mode="", question="", task="", verbose=False: ("一张猫图", "mock"),
+    )
+    monkeypatch.setattr(
+        "deepsee.mcp_server.Seer.compare",
+        lambda self, sources, question="", task="compare", verbose=False: ("两图有差异", "mock"),
     )
     return server
 
@@ -54,6 +58,23 @@ def test_tools_list():
     assert "describe_image" in names
     assert "generate_image" in names
     assert "vision_status" in names
+    assert "analyze_image" in names
+    assert "compare_images" in names
+    assert out["result"]["ttlMs"] > 0
+    assert out["result"]["cacheScope"] == "public"
+
+
+def test_server_discover_modern_protocol():
+    server = McpServer()
+    out = _call(server, "server/discover", {"_meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientInfo": {"name": "test", "version": "1"},
+    }})
+    assert "2026-07-28" in out["result"]["supportedVersions"]
+    assert out["result"]["serverInfo"]["name"] == "deepsee"
+    assert out["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["name"] == "deepsee"
+    assert out["result"]["ttlMs"] > 0
+    assert out["result"]["cacheScope"] == "public"
 
 
 def test_tools_call_describe(monkeypatch):
@@ -68,6 +89,18 @@ def test_tools_call_ocr(monkeypatch):
     server = _server(monkeypatch)
     out = _call(server, "tools/call", {"name": "ocr_image", "arguments": {"source": "/x.png"}})
     assert "猫图" in out["result"]["content"][0]["text"]
+
+
+def test_tools_call_analyze_alias_and_compare(monkeypatch):
+    server = _server(monkeypatch)
+    out = _call(server, "tools/call", {"name": "analyze_image", "arguments": {
+        "source": "/x.png", "task": "error", "question": "怎么修？",
+    }})
+    assert "猫图" in out["result"]["content"][0]["text"]
+    out = _call(server, "tools/call", {"name": "compare_images", "arguments": {
+        "sources": ["/a.png", "/b.png"], "question": "哪里不同？",
+    }})
+    assert "两图有差异" in out["result"]["content"][0]["text"]
 
 
 def test_tools_call_status():

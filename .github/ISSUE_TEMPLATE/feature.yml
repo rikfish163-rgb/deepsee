@@ -1,0 +1,30 @@
+name: 功能建议
+description: 提议新的视觉后端、客户端集成或易用性改进
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 要解决的问题
+      description: 请描述用户场景，而不只是实现方案。
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 建议方案
+    validations:
+      required: true
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: 兼容性与替代方案
+      description: 说明涉及的客户端、协议、供应商或已有替代方式。
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: 范围确认
+      options:
+        - label: 该建议不要求抓取网页 token、绕过供应商鉴权或提交第三方凭据。
+          required: true

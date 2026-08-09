@@ -69,6 +69,26 @@ def test_chain_failover(monkeypatch):
     assert provider == "b"
 
 
+def test_chain_failure_cooldown_skips_recently_failed_provider(monkeypatch):
+    calls = []
+
+    def fake(url, payload, headers, timeout=None, method=None):
+        calls.append(url)
+        if "a.example" in url:
+            raise HttpError(503, "down")
+        return 200, {"choices": [{"message": {"content": "备用成功"}}]}
+
+    monkeypatch.setattr(vision_mod, "http_json", fake)
+    chain = VisionChain([
+        {"provider": "a", "base_url": "https://a.example/v1", "api_key": "k1", "model": "m1"},
+        {"provider": "b", "base_url": "https://b.example/v1", "api_key": "k2", "model": "m2"},
+    ], failure_cooldown=60)
+    assert chain.caption(PNG, "描述")[1] == "b"
+    assert chain.caption(PNG, "另一个问题")[1] == "b"
+    assert sum("a.example" in url for url in calls) == 1
+    assert sum("b.example" in url for url in calls) == 2
+
+
 def test_chain_all_fail(monkeypatch):
     def fake(url, payload, headers, timeout=None, method=None):
         raise HttpError(500, "down")

@@ -16,11 +16,23 @@ def test_ocr_subcommand_has_required_defaults():
 
 def test_see_subcommand_flags():
     p = build_parser()
-    args = p.parse_args(["see", "a.png", "-m", "qa", "-q", "这是什么?", "-o", "/tmp/out.txt", "-v"])
+    args = p.parse_args([
+        "see", "a.png", "-m", "qa", "-q", "这是什么?", "--task", "diagram",
+        "-o", "/tmp/out.txt", "-v",
+    ])
     assert args.mode == "qa"
     assert args.question == "这是什么?"
+    assert args.task == "diagram"
     assert args.output == "/tmp/out.txt"
     assert args.verbose is True
+
+
+def test_compare_subcommand_parser():
+    p = build_parser()
+    args = p.parse_args(["compare", "before.png", "after.png", "-q", "哪里变化了？"])
+    assert args.sources == ["before.png", "after.png"]
+    assert args.question == "哪里变化了？"
+    assert args.output is None
 
 
 def test_install_individual_flag_not_all():

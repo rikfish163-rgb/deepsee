@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 私密安全报告
+    url: https://github.com/rikfish163-rgb/deepsee/security/advisories/new
+    about: 漏洞或潜在凭据泄露请勿公开提交。

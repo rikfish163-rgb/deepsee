@@ -1,3 +1,3 @@
-"""deepsee — 给 DeepSeek 等纯文本模型补齐「看图 + 画图」能力。"""
+"""deepsee — 给 DeepSeek 等纯文本模型补齐图片理解能力。"""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
