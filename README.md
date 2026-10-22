@@ -449,3 +449,10 @@ pytest -q
 ## License
 
 [MIT License](LICENSE)
+
+### Standalone Agent Skill
+
+The existing skill is also available as [`deepsee/skill/`](deepsee/skill/), with
+runtime prerequisites, safe usage and CLI/MCP examples. See
+[distribution and client setup](docs/SKILL_DISTRIBUTION.md) for Claude Code,
+Cursor, Copilot and isolated Codex installation. No marketplace account is needed.
