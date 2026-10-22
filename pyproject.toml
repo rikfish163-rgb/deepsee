@@ -43,6 +43,7 @@ include = ["deepsee*"]
 
 [tool.setuptools.package-data]
 "deepsee.web" = ["static/*"]
+"deepsee" = ["skill/*.md", "skill/LICENSE"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
